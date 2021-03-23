@@ -3,9 +3,9 @@
 Access to OS libraries (e.g. the cryptography library) from **YottaDB** code.
 
 Chris Munt <cmunt@mgateway.com>  
-5 March 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+23 March 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Current Release: Version: 1.0; Revision 1.
+* Current Release: Version: 1.2; Revision 2.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 Contents
@@ -243,3 +243,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.0.1 (5 March 2021)
 
 * Initial Release
+
+### v1.2.2 (23 March 2021)
+
+* Introduce experimental network I/O layer.
+
