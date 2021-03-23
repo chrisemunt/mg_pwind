@@ -29,14 +29,16 @@
 #define MG_PWIND_H
 
 #define MAJORVERSION             1
-#define MINORVERSION             0
-#define BUILDNUMBER              1
+#define MINORVERSION             2
+#define BUILDNUMBER              2
 
 #define DBX_VERSION_MAJOR        "1"
-#define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "1"
+#define DBX_VERSION_MINOR        "2"
+#define DBX_VERSION_BUILD        "2"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
+
+#define WORK_BUFFER              32768
 
 
 #if defined(_WIN32)
@@ -105,6 +107,14 @@
 #include <dlfcn.h>
 #include <math.h>
 
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/un.h>
+#include <sys/uio.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+
 #endif
 
 #include <openssl/rsa.h>
@@ -122,6 +132,8 @@ typedef int             ydb_int_t;
 typedef unsigned int    ydb_uint_t;
 typedef long            ydb_long_t;
 typedef unsigned long   ydb_ulong_t;
+typedef char            ydb_char_t;
+typedef int             (*ydb_tpfnptr_t) (void *tpfnparm);  
 
 typedef struct {
    unsigned int   len_alloc;
@@ -173,14 +185,7 @@ typedef int    (* MG_FREE)       (void *p);
 typedef struct tagDBXLOG {
    char log_file[128];
    char log_level[8];
-   char log_filter[64];
    short log_errors;
-   short log_functions;
-   short log_transmissions;
-   unsigned long req_no;
-   unsigned long fun_no;
-   char product[4];
-   char product_version[16];
 } DBXLOG, *PDBXLOG;
 
 
@@ -245,6 +250,75 @@ typedef struct tagDBXCRYPTSO {
    unsigned char *   (* p_MD5)                           (const unsigned char *d, unsigned long n, unsigned char *md);
 
 } DBXCRYPTSO, *PDBXCRYPTSO;
+
+
+#if defined(_WIN32)
+#define DBX_YDB_DLL              "yottadb.dll"
+#else
+#define DBX_IRIS_SO              "libirisdb.so"
+#define DBX_IRIS_DYLIB           "libirisdb.dylib"
+#define DBX_YDB_SO               "libyottadb.so"
+#define DBX_YDB_DYLIB            "libyottadb.dylib"
+#endif
+
+typedef struct tagDBXYDBSO {
+   short             loaded;
+   char              libdir[256];
+   char              libnam[256];
+   char              funprfx[8];
+   char              dbname[32];
+   DBXPLIB           p_library;
+
+   int               (* p_ydb_init)                      (void);
+   int               (* p_ydb_exit)                      (void);
+   int               (* p_ydb_malloc)                    (size_t size);
+   int               (* p_ydb_free)                      (void *ptr);
+   int               (* p_ydb_data_s)                    (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, unsigned int *ret_value);
+   int               (* p_ydb_delete_s)                  (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, int deltype);
+   int               (* p_ydb_set_s)                     (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *value);
+   int               (* p_ydb_get_s)                     (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *ret_value);
+   int               (* p_ydb_subscript_next_s)          (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *ret_value);
+   int               (* p_ydb_subscript_previous_s)      (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *ret_value);
+   int               (* p_ydb_node_next_s)               (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, int *ret_subs_used, ydb_buffer_t *ret_subsarray);
+   int               (* p_ydb_node_previous_s)           (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, int *ret_subs_used, ydb_buffer_t *ret_subsarray);
+   int               (* p_ydb_incr_s)                    (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *increment, ydb_buffer_t *ret_value);
+   int               (* p_ydb_ci)                        (const char *c_rtn_name, ...);
+   int               (* p_ydb_cip)                       (ci_name_descriptor *ci_info, ...);
+   int               (* p_ydb_lock_incr_s)               (unsigned long long timeout_nsec, ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
+   int               (* p_ydb_lock_decr_s)               (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
+   void              (* p_ydb_zstatus)                   (ydb_char_t* msg_buffer, ydb_long_t buf_len);
+   int               (* p_ydb_tp_s)                      (ydb_tpfnptr_t tpfn, void *tpfnparm, const char *transid, int namecount, ydb_buffer_t *varnames);
+
+} DBXYDBSO, *PDBXYDBSO;
+
+
+#define DBX_MAX_CLIFD            32
+typedef struct tagDBXTCPSRV {
+   int count;
+   int port;
+   int srv_sockfd;
+   int cli_sockfd;
+   int new_sockfd[DBX_MAX_CLIFD];
+   struct sockaddr_in srv_addr;
+   struct sockaddr_in cli_addr;
+
+#if !defined(_WIN32)
+   pthread_t stdout_tid;
+   pthread_t domsrv_tid;
+#endif
+   char domsrv_name[256];
+   int domsrv_sockfd;
+   int domcli_sockfd;
+#if !defined(_WIN32)
+   struct sockaddr_un domsrv_addr;
+   struct sockaddr_un domcli_addr;
+#endif
+
+   unsigned int wbuffer_size;
+   unsigned int wbuffer_datasize;
+   unsigned int wbuffer_offset;
+   unsigned char wbuffer[WORK_BUFFER];
+} DBXTCPSRV, *PDBXTCPSRV;
 
 
 /* CRC32 */
@@ -325,7 +399,21 @@ DBX_EXTFUN(int)         mg_encode_b64                 (int count, ydb_string_t *
 DBX_EXTFUN(int)         mg_decode_b64                 (int count, ydb_string_t *in, ydb_string_t *out);
 DBX_EXTFUN(int)         mg_crc32                      (int count, ydb_string_t *in, ydb_uint_t *out);
 
+#if !defined(_WIN32)
+DBX_EXTFUN(int)         mg_tcp_options                (int count, ydb_string_t *options, ydb_string_t *error);
+DBX_EXTFUN(int)         mg_tcpserver_init             (int count, ydb_int_t port, ydb_string_t *options, ydb_string_t *error);
+DBX_EXTFUN(int)         mg_tcpserver_accept           (int count, ydb_string_t *key, ydb_string_t *error);
+DBX_EXTFUN(int)         mg_tcpserver_close            (int count, ydb_string_t *key);
+DBX_EXTFUN(int)         mg_tcpchild_init              (int count, ydb_string_t *key, ydb_string_t *options, ydb_string_t *error);
+DBX_EXTFUN(int)         mg_tcpchild_send              (int count, ydb_string_t *data, ydb_int_t flush, ydb_string_t *error);
+DBX_EXTFUN(int)         mg_tcpchild_recv              (int count, ydb_string_t *data, ydb_int_t len, ydb_int_t timeout, ydb_string_t *error);
+DBX_EXTFUN(int)         mg_tcpchild_recv_ascii        (int count, ydb_int_t *data, ydb_int_t timeout, ydb_string_t *error);
+DBX_EXTFUN(int)         mg_tcpchild_recv_message      (int count, ydb_string_t *data, ydb_int_t *len, ydb_int_t *cmnd, ydb_int_t timeout, ydb_string_t *error);
+DBX_EXTFUN(int)         mg_tcpchild_close             (int count);
+#endif
+
 int                     crypt_load_library            (DBXCRYPTSO *p_crypt_so);
+int                     ydb_load_library              (DBXYDBSO *p_ydb_so);
 
 int                     mg_set_size                   (unsigned char *str, unsigned long data_len);
 unsigned long           mg_get_size                   (unsigned char *str);
@@ -363,4 +451,20 @@ int                     mg_b64_strip_enc_buffer       (char *buf, int length);
 int                     mg_hex_encode                 (char *from, int length, char *to);
 unsigned long           mg_crc32_checksum             (char *buffer, size_t len);
 
+#if !defined(_WIN32)
+void *                  mg_stdin_listener             (void *pargs);
+void *                  mg_stdout_listener            (void *pargs);
+void *                  mg_domsrv_listener            (void *pargs);
+int                     mg_domsrv_init                ();
+int                     mg_domsrv_sendfd              (int sockfd);
+int                     mg_domsrv_recvfd              (char *key, char *options, char *error);
+int                     mg_tcpsrv_init                (int port, char *options, char *error);
+int                     mg_tcpsrv_accept              (char *key, char *error);
+int                     mg_tcpsrv_send                (char *data, int len, int flush, char *error);
+int                     mg_tcpsrv_recv                (char *data, int dsize, int len, int timeout, char *error);
+int                     mg_tcpsrv_recv_message        (char *data, int dsize, int *len, int *cmnd, int timeout, char *error);
+int                     mg_tcpsrv_close               (char *key);
 #endif
+
+#endif
+
