@@ -50,12 +50,15 @@ endif
 all : app
 
 # Link the object file and dependent libraries into a binary
-app : mg_pwind.o
-	$(LINK) -o mg_pwind.so $(LINKFLAGS) mg_pwind.o
+app : mg_dba.o mg_pwind.o
+	$(LINK) -o mg_pwind.so $(LINKFLAGS) mg_dba.o mg_pwind.o
 
 # Compile the source file into object file
 mg_pwind.o : mg_pwind.c
 	$(CC) -o mg_pwind.o $(CCFLAGS) -DMG_PWIND_DSO -I$(MGPWINDINC) -c mg_pwind.c
+
+mg_dba.o : mg_dba.c
+	$(CC) -o mg_dba.o $(CCFLAGS) -DMG_PWIND_DSO -I$(MGPWINDINC) -c mg_dba.c
 
 # Install mg_pwind module
 install :
@@ -64,7 +67,7 @@ install :
 
 # Clean target
 clean :
-	rm -rf mg_pwind.so mg_pwind.o
+	rm -rf mg_pwind.so mg_pwind.o mg_dba.o
 
 
 

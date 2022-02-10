@@ -4,7 +4,7 @@
    | Description: Access to DSO functions from YottaDB                        |
    | Author:      Chris Munt cmunt@mgateway.com                               |
    |                         chris.e.munt@gmail.com                           |
-   | Copyright (c) 2020-2021 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2020-2022 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -38,37 +38,45 @@ Version 1.2.2 23 March 2021:
 
 
 #include "mg_pwind.h"
+/*
+#define MG_DBA_EMBEDDED          1
+#include "mg_dbasys.h"
+#include "mg_dba.h"
+*/
 
 #if !defined(_WIN32)
 extern int errno;
 #endif
 
-static DBXCRYPTSO crypt_so       = {0, {0}, {0}, NULL, NULL};
-static DBXCRYPTSO *p_crypt_so    = &crypt_so;
+static MGPWCRYPTSO crypt_so      = {0, {0}, {0}, NULL, NULL};
+static MGPWCRYPTSO *p_crypt_so   = &crypt_so;
+/*
+static MGPWYDBSO ydb_so          = {0, {0}, {0}, {0}, {0}, NULL, NULL};
+static MGPWYDBSO *p_ydb_so       = &ydb_so;
+*/
+static MGPWTCPSRV  tcpsrv        = {0, 0};
+static MGPWTCPSRV  *p_tcpsrv     = &tcpsrv;
 
-static DBXYDBSO ydb_so           = {0, {0}, {0}, {0}, {0}, NULL, NULL};
-static DBXYDBSO *p_ydb_so        = &ydb_so;
-
-static DBXTCPSRV  tcpsrv         = {0, 0};
-static DBXTCPSRV  *p_tcpsrv      = &tcpsrv;
-
-static DBXLOG     pwindlog       = {"/tmp/mg_pwind.log", {0}, 0};
-static DBXLOG     *p_log         = &pwindlog;
+static MGPWLOG     pwindlog      = {"/tmp/mg_pwind.log", {0}, 0};
+static MGPWLOG     *p_log        = &pwindlog;
 
 static char error_message[512]   = {0};
+static int  error_message_len    = 0;
 static int  error_code = 0;
+static DBXSTR gblock = {0, 0, NULL};
+static ydb_string_t gresult = {0, NULL};
 
-MG_MALLOC            dbx_ext_malloc = NULL;
-MG_REALLOC           dbx_ext_realloc = NULL;
-MG_FREE              dbx_ext_free = NULL;
+MGPW_MALLOC            mgpw_ext_malloc = NULL;
+MGPW_REALLOC           mgpw_ext_realloc = NULL;
+MGPW_FREE              mgpw_ext_free = NULL;
 
 #if defined(_WIN32)
-CRITICAL_SECTION  dbx_global_mutex;
+CRITICAL_SECTION  mgpw_global_mutex;
 #else
-pthread_mutex_t   dbx_global_mutex  = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t   dbx_cond_mutex    = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t    dbx_cond          = PTHREAD_COND_INITIALIZER;
-static int        dbx_cond_flag     = 0;
+pthread_mutex_t   mgpw_global_mutex  = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t   mgpw_cond_mutex    = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t    mgpw_cond          = PTHREAD_COND_INITIALIZER;
+static int        mgpw_cond_flag     = 0;
 #endif
 
 int cmtxxx = 1;
@@ -79,14 +87,14 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
    switch (fdwReason)
    { 
       case DLL_PROCESS_ATTACH:
-         mg_init_critical_section((void *) &dbx_global_mutex);
+         mgpw_init_critical_section((void *) &mgpw_global_mutex);
          break;
       case DLL_THREAD_ATTACH:
          break;
       case DLL_THREAD_DETACH:
          break;
       case DLL_PROCESS_DETACH:
-         mg_delete_critical_section((void *) &dbx_global_mutex);
+         mgpw_delete_critical_section((void *) &mgpw_global_mutex);
          break;
    }
    return TRUE;
@@ -94,25 +102,313 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
 #endif /* #if defined(_WIN32) */
 
 
-DBX_EXTFUN(int) mg_version(int count, ydb_string_t *out)
+MGPW_EXTFUN(int) mg_error(int count, ydb_string_t *error)
 {
-   sprintf((char *) out->address, "mg_pwind:%s", DBX_VERSION);
+   if (error_message_len == 0) {
+      error_message_len = (int) strlen(error_message);
+   }
+   memcpy((void *) error->address, (void *) error_message, (size_t) error_message_len);
+   error->length = (unsigned long) error_message_len;
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_dbopen(int count, ydb_string_t *dbtype, ydb_string_t *path, ydb_string_t *host, ydb_string_t *port, ydb_string_t *username, ydb_string_t *password, ydb_string_t *nspace, ydb_string_t *parameters)
+{
+   int n, rc;
+   DBXSTR *pblock;
+   ydb_string_t *presult;
+#if !defined(_WIN32)
+   struct sigaction oldact;
+#endif
+
+   if (!gblock.buf_addr) {
+      gblock.buf_addr = (char *) malloc(DBX_BUFFER);
+      if (!gblock.buf_addr) {
+         return YDB_FAILURE;
+      }
+      gblock.len_alloc = DBX_BUFFER;
+      gblock.len_used = 0;
+   }
+   if (!gresult.address) {
+      gresult.address = (char *) malloc(DBX_BUFFER);
+      if (!gresult.address) {
+         return YDB_FAILURE;
+      }
+      gresult.length = 0;
+   }
+
+   pblock = &gblock;
+   pblock->len_used = 0;
+   presult = &gresult;
+   presult->length = 0;
+
+   dbx_init();
+
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   for (n = 0; n < 14; n ++) {
+      if (n < count) {
+         if (n == 0)
+            mg_add_block_data(pblock, (unsigned char *) dbtype->address, (unsigned long) dbtype->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+         else if (n == 1)
+            mg_add_block_data(pblock, (unsigned char *) path->address, (unsigned long) path->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+         else if (n == 2)
+            mg_add_block_data(pblock, (unsigned char *) host->address, (unsigned long) host->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+         else if (n == 3)
+            mg_add_block_data(pblock, (unsigned char *) port->address, (unsigned long) port->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+         else if (n == 4)
+            mg_add_block_data(pblock, (unsigned char *) username->address, (unsigned long) username->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+         else if (n == 5)
+            mg_add_block_data(pblock, (unsigned char *) password->address, (unsigned long) password->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+         else if (n == 6)
+            mg_add_block_data(pblock, (unsigned char *) nspace->address, (unsigned long) nspace->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+         else
+            mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_DATA, DBX_DTYPE_STR);
+      }
+      else {
+         mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_DATA, DBX_DTYPE_STR);
+      }
+   }
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_OPEN);
+
+#if !defined(_WIN32)
+   sigaction(SIGALRM, NULL, &oldact);
+#endif
+
+   rc = dbx_open((unsigned char *) pblock->buf_addr, NULL);
+
+#if !defined(_WIN32)
+   sigaction(SIGALRM, &oldact, NULL);
+#endif
+
+   rc = mgpw_unpack_result(pblock, presult);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dbclose(int count)
+{
+   int rc;
+   DBXSTR *pblock;
+   ydb_string_t *presult;
+
+   if (!gblock.buf_addr || !gresult.address) {
+      return YDB_FAILURE;
+   }
+   pblock = &gblock;
+   pblock->len_used = 0;
+   presult = &gresult;
+   presult->length = 0;
+
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_CLOSE);
+
+   rc = dbx_close((unsigned char *) pblock->buf_addr, NULL);
+
+   rc = mgpw_unpack_result(pblock, presult);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dbget(int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
+{
+   int rc;
+   DBXSTR *pblock;
+
+   if (!gblock.buf_addr || !gresult.address) {
+      return YDB_FAILURE;
+   }
+   data->length = 0;
+   pblock = &gblock;
+   pblock->len_used = 0;
+
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
+
+   rc = dbx_get((unsigned char *) pblock->buf_addr, NULL);
+
+   rc = mgpw_unpack_result(pblock, data);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dbset(int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
+{
+   int rc;
+   DBXSTR *pblock;
+   ydb_string_t *presult;
+
+   if (!gblock.buf_addr || !gresult.address) {
+      return YDB_FAILURE;
+   }
+   pblock = &gblock;
+   pblock->len_used = 0;
+   presult = &gresult;
+   presult->length = 0;
+
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
+   mg_add_block_data(pblock, (unsigned char *) data->address, (unsigned long) data->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
+
+   rc = dbx_set((unsigned char *) pblock->buf_addr, NULL);
+
+   mgpw_unpack_result(pblock, presult);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dbkill(int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
+{
+   int rc;
+   DBXSTR *pblock;
+   ydb_string_t *presult;
+
+   if (!gblock.buf_addr || !gresult.address) {
+      return YDB_FAILURE;
+   }
+   pblock = &gblock;
+   pblock->len_used = 0;
+   presult = &gresult;
+   presult->length = 0;
+
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mgpw_pack_args(pblock, count, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
+
+   rc = dbx_delete((unsigned char *) pblock->buf_addr, NULL);
+
+   mgpw_unpack_result(pblock, presult);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dborder(int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
+{
+   int rc;
+   DBXSTR *pblock;
+
+   if (!gblock.buf_addr || !gresult.address) {
+      return YDB_FAILURE;
+   }
+   pblock = &gblock;
+   pblock->len_used = 0;
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
+
+   rc = dbx_next((unsigned char *) pblock->buf_addr, NULL);
+
+   mgpw_unpack_result(pblock, data);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dbprevious(int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
+{
+   int rc;
+   DBXSTR *pblock;
+
+   if (!gblock.buf_addr || !gresult.address) {
+      return YDB_FAILURE;
+   }
+   pblock = &gblock;
+   pblock->len_used = 0;
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
+
+   rc = dbx_previous((unsigned char *) pblock->buf_addr, NULL);
+
+   mgpw_unpack_result(pblock, data);
+
+   return rc;
+}
+
+
+int mgpw_pack_args(DBXSTR *pblock, int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
+{
+   int n;
+   
+   n = 0;
+   mg_add_block_data(pblock, (unsigned char *) k1->address, (unsigned long) k1->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k2->address, (unsigned long) k2->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k3->address, (unsigned long) k3->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k4->address, (unsigned long) k4->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   return YDB_OK;
+}
+
+
+int mgpw_unpack_result(DBXSTR *pblock, ydb_string_t *out)
+{
+   int rc, dsort, dtype;
+   unsigned long data_len;
+
+   data_len = mg_get_block_size(pblock, 0, &dsort, &dtype);
+   if (dsort == DBX_DSORT_ERROR) {
+      memcpy((void *) error_message, (void *) (pblock->buf_addr + 5), (size_t) data_len);
+      error_message_len = data_len;
+      out->length = 0;
+      rc = YDB_FAILURE;
+   }
+   else {
+      memcpy((void *) out->address, (void *) (pblock->buf_addr + 5), (size_t) pblock->len_used);
+      out->length = data_len;
+      rc = YDB_OK;
+   }
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_version(int count, ydb_string_t *out)
+{
+   if (count < 1) {
+      return YDB_FAILURE;
+   }
+   sprintf((char *) out->address, "mg_pwind:%s", MGPW_VERSION);
    out->length = (int) strlen(out->address);
 
    return YDB_OK;
 }
 
 
-DBX_EXTFUN(int) mg_crypt_library(int count, ydb_string_t *in)
+MGPW_EXTFUN(int) mg_crypt_library(int count, ydb_string_t *in)
 {
+   if (count < 1) {
+      return YDB_FAILURE;
+   }
    strcpy(p_crypt_so->libnam, in->address);
+
    return YDB_OK;
 }
 
 
-DBX_EXTFUN(int) mg_ssl_version(int count, ydb_string_t *out, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_ssl_version(int count, ydb_string_t *out, ydb_string_t *error)
 {
-   DBX_CRYPT_LOAD(error);
+   MGPW_CRYPT_LOAD(error);
 
    strcpy((char *) out->address, p_crypt_so->p_OpenSSL_version(0));
    out->length = (int) strlen(out->address);
@@ -121,24 +417,24 @@ DBX_EXTFUN(int) mg_ssl_version(int count, ydb_string_t *out, ydb_string_t *error
 }
 
 
-DBX_EXTFUN(int) mg_sha1(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_sha1(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
 {
    int mac_len, len;
    char mac[1024];
 
-   DBX_CRYPT_LOAD(error);
+   MGPW_CRYPT_LOAD(error);
 
    memset(mac, 0, 1024);
    p_crypt_so->p_SHA1(in->address, in->length, mac);
    mac_len = 20;
 
    if (flags == 1) {
-      len = mg_b64_encode((char *) mac, mac_len, out->address, 0);
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
       out->address[len] = '\0';
       out->length = len;
    }
    else if (flags == 2) {
-      len = mg_hex_encode((char *) mac, mac_len, out->address);
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
       out->address[len] = '\0';
       out->length = len;
    }
@@ -151,24 +447,24 @@ DBX_EXTFUN(int) mg_sha1(int count, ydb_string_t *in, ydb_int_t flags, ydb_string
 }
 
 
-DBX_EXTFUN(int) mg_sha256(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_sha256(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
 {
    int mac_len, len;
    char mac[1024];
 
-   DBX_CRYPT_LOAD(error);
+   MGPW_CRYPT_LOAD(error);
 
    memset(mac, 0, 1024);
    p_crypt_so->p_SHA256(in->address, in->length, mac);
    mac_len = 32;
 
    if (flags == 1) {
-      len = mg_b64_encode((char *) mac, mac_len, out->address, 0);
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
       out->address[len] = '\0';
       out->length = len;
    }
    else if (flags == 2) {
-      len = mg_hex_encode((char *) mac, mac_len, out->address);
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
       out->address[len] = '\0';
       out->length = len;
    }
@@ -181,24 +477,24 @@ DBX_EXTFUN(int) mg_sha256(int count, ydb_string_t *in, ydb_int_t flags, ydb_stri
 }
 
 
-DBX_EXTFUN(int) mg_sha512(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_sha512(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
 {
    int mac_len, len;
    char mac[1024];
 
-   DBX_CRYPT_LOAD(error);
+   MGPW_CRYPT_LOAD(error);
 
    memset(mac, 0, 1024);
    p_crypt_so->p_SHA512(in->address, in->length, mac);
    mac_len = 64;
 
    if (flags == 1) {
-      len = mg_b64_encode((char *) mac, mac_len, out->address, 0);
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
       out->address[len] = '\0';
       out->length = len;
    }
    else if (flags == 2) {
-      len = mg_hex_encode((char *) mac, mac_len, out->address);
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
       out->address[len] = '\0';
       out->length = len;
    }
@@ -211,24 +507,24 @@ DBX_EXTFUN(int) mg_sha512(int count, ydb_string_t *in, ydb_int_t flags, ydb_stri
 }
 
 
-DBX_EXTFUN(int) mg_md5(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_md5(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
 {
    int mac_len, len;
    char mac[1024];
 
-   DBX_CRYPT_LOAD(error);
+   MGPW_CRYPT_LOAD(error);
 
    memset(mac, 0, 1024);
    p_crypt_so->p_MD5(in->address, in->length, mac);
    mac_len = 16;
 
    if (flags == 1) {
-      len = mg_b64_encode((char *) mac, mac_len, out->address, 0);
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
       out->address[len] = '\0';
       out->length = len;
    }
    else if (flags == 2) {
-      len = mg_hex_encode((char *) mac, mac_len, out->address);
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
       out->address[len] = '\0';
       out->length = len;
    }
@@ -241,23 +537,23 @@ DBX_EXTFUN(int) mg_md5(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_
 }
 
 
-DBX_EXTFUN(int) mg_hmac_sha1(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_hmac_sha1(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
 {
    int mac_len, len;
    char mac[1024];
 
-   DBX_CRYPT_LOAD(error);
+   MGPW_CRYPT_LOAD(error);
 
    memset(mac, 0, 1024);
    p_crypt_so->p_HMAC(p_crypt_so->p_EVP_sha1(), key->address, key->length, in->address, in->length, mac, &mac_len);
 
    if (flags == 1) {
-      len = mg_b64_encode((char *) mac, mac_len, out->address, 0);
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
       out->address[len] = '\0';
       out->length = len;
    }
    else if (flags == 2) {
-      len = mg_hex_encode((char *) mac, mac_len, out->address);
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
       out->address[len] = '\0';
       out->length = len;
    }
@@ -270,23 +566,23 @@ DBX_EXTFUN(int) mg_hmac_sha1(int count, ydb_string_t *key, ydb_string_t *in, ydb
 }
 
 
-DBX_EXTFUN(int) mg_hmac_sha256(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_hmac_sha256(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
 {
    int mac_len, len;
    char mac[1024];
 
-   DBX_CRYPT_LOAD(error);
+   MGPW_CRYPT_LOAD(error);
 
    memset(mac, 0, 1024);
    p_crypt_so->p_HMAC(p_crypt_so->p_EVP_sha256(), key->address, key->length, in->address, in->length, mac, &mac_len);
 
    if (flags == 1) {
-      len = mg_b64_encode((char *) mac, mac_len, out->address, 0);
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
       out->address[len] = '\0';
       out->length = len;
    }
    else if (flags == 2) {
-      len = mg_hex_encode((char *) mac, mac_len, out->address);
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
       out->address[len] = '\0';
       out->length = len;
    }
@@ -299,23 +595,23 @@ DBX_EXTFUN(int) mg_hmac_sha256(int count, ydb_string_t *key, ydb_string_t *in, y
 }
 
 
-DBX_EXTFUN(int) mg_hmac_sha512(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_hmac_sha512(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
 {
    int mac_len, len;
    char mac[1024];
 
-   DBX_CRYPT_LOAD(error);
+   MGPW_CRYPT_LOAD(error);
 
    memset(mac, 0, 1024);
    p_crypt_so->p_HMAC(p_crypt_so->p_EVP_sha512(), key->address, key->length, in->address, in->length, mac, &mac_len);
 
    if (flags == 1) {
-      len = mg_b64_encode((char *) mac, mac_len, out->address, 0);
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
       out->address[len] = '\0';
       out->length = len;
    }
    else if (flags == 2) {
-      len = mg_hex_encode((char *) mac, mac_len, out->address);
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
       out->address[len] = '\0';
       out->length = len;
    }
@@ -328,23 +624,23 @@ DBX_EXTFUN(int) mg_hmac_sha512(int count, ydb_string_t *key, ydb_string_t *in, y
 }
 
 
-DBX_EXTFUN(int) mg_hmac_md5(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_hmac_md5(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
 {
    int mac_len, len;
    char mac[1024];
 
-   DBX_CRYPT_LOAD(error);
+   MGPW_CRYPT_LOAD(error);
 
    memset(mac, 0, 1024);
    p_crypt_so->p_HMAC(p_crypt_so->p_EVP_md5(), key->address, key->length, in->address, in->length, mac, &mac_len);
 
    if (flags == 1) {
-      len = mg_b64_encode((char *) mac, mac_len, out->address, 0);
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
       out->address[len] = '\0';
       out->length = len;
    }
    else if (flags == 2) {
-      len = mg_hex_encode((char *) mac, mac_len, out->address);
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
       out->address[len] = '\0';
       out->length = len;
    }
@@ -357,11 +653,11 @@ DBX_EXTFUN(int) mg_hmac_md5(int count, ydb_string_t *key, ydb_string_t *in, ydb_
 }
 
 
-DBX_EXTFUN(int) mg_encode_b64(int count, ydb_string_t *in, ydb_string_t *out)
+MGPW_EXTFUN(int) mg_encode_b64(int count, ydb_string_t *in, ydb_string_t *out)
 {
    int len;
 
-   len = mg_b64_encode((char *) in->address, in->length, out->address, 0);
+   len = mgpw_b64_encode((char *) in->address, in->length, out->address, 0);
    out->address[len] = '\0';
    out->length = len;
 
@@ -369,11 +665,11 @@ DBX_EXTFUN(int) mg_encode_b64(int count, ydb_string_t *in, ydb_string_t *out)
 }
 
 
-DBX_EXTFUN(int) mg_decode_b64(int count, ydb_string_t *in, ydb_string_t *out)
+MGPW_EXTFUN(int) mg_decode_b64(int count, ydb_string_t *in, ydb_string_t *out)
 {
    int len;
 
-   len = mg_b64_decode((char *) in->address, in->length, out->address);
+   len = mgpw_b64_decode((char *) in->address, in->length, out->address);
    out->address[len] = '\0';
    out->length = len;
 
@@ -381,9 +677,9 @@ DBX_EXTFUN(int) mg_decode_b64(int count, ydb_string_t *in, ydb_string_t *out)
 }
 
 
-DBX_EXTFUN(int) mg_crc32(int count, ydb_string_t *in, ydb_uint_t *out)
+MGPW_EXTFUN(int) mg_crc32(int count, ydb_string_t *in, ydb_uint_t *out)
 {
-   *out = (ydb_uint_t) mg_crc32_checksum(in->address, (size_t) in->length);
+   *out = (ydb_uint_t) mgpw_crc32_checksum(in->address, (size_t) in->length);
 
    return YDB_OK;
 }
@@ -391,20 +687,20 @@ DBX_EXTFUN(int) mg_crc32(int count, ydb_string_t *in, ydb_uint_t *out)
 
 /* v1.2.2 */
 #if !defined(_WIN32)
-DBX_EXTFUN(int) mg_tcp_options(int count, ydb_string_t *options, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_tcp_options(int count, ydb_string_t *options, ydb_string_t *error)
 {
    return YDB_OK;
 }
 
 
-DBX_EXTFUN(int) mg_tcpserver_init(int count, ydb_int_t port, ydb_string_t *options, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_tcpserver_init(int count, ydb_int_t port, ydb_string_t *options, ydb_string_t *error)
 {
    int rc;
 
    error->address[0] = '\0';
    error->length = 0;
 
-   rc = mg_tcpsrv_init((int) port, options->address, error->address);
+   rc = mgpw_tcpsrv_init((int) port, options->address, error->address);
    if (rc != YDB_OK) {
       error->length = (unsigned long) strlen(error->address);
    }
@@ -413,7 +709,7 @@ DBX_EXTFUN(int) mg_tcpserver_init(int count, ydb_int_t port, ydb_string_t *optio
 }
 
 
-DBX_EXTFUN(int) mg_tcpserver_accept(int count, ydb_string_t *key, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_tcpserver_accept(int count, ydb_string_t *key, ydb_string_t *error)
 {
    int rc;
 
@@ -422,7 +718,7 @@ DBX_EXTFUN(int) mg_tcpserver_accept(int count, ydb_string_t *key, ydb_string_t *
    if (key->length == 0) {
       key->address[0] = '\0';
    }
-   rc = mg_tcpsrv_accept(key->address, error->address);
+   rc = mgpw_tcpsrv_accept(key->address, error->address);
    key->length = (unsigned long) strlen(key->address);
    if (rc != YDB_OK) {
       error->length = (unsigned long) strlen(error->address);
@@ -432,24 +728,24 @@ DBX_EXTFUN(int) mg_tcpserver_accept(int count, ydb_string_t *key, ydb_string_t *
 }
 
 
-DBX_EXTFUN(int) mg_tcpserver_close(int count, ydb_string_t *key)
+MGPW_EXTFUN(int) mg_tcpserver_close(int count, ydb_string_t *key)
 {
    int rc;
 
-   rc = mg_tcpsrv_close(key->address);
+   rc = mgpw_tcpsrv_close(key->address);
 
    return rc;
 }
 
 
-DBX_EXTFUN(int) mg_tcpchild_init(int count, ydb_string_t *key, ydb_string_t *options, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_tcpchild_init(int count, ydb_string_t *key, ydb_string_t *options, ydb_string_t *error)
 {
    int rc;
 
    error->address[0] = '\0';
    error->length = 0;
 
-   rc = mg_domsrv_recvfd(key->address, options->address, error->address);
+   rc = mgpw_domsrv_recvfd(key->address, options->address, error->address);
    key->length = (unsigned long) strlen(key->address);
    if (rc != YDB_OK) {
       error->length = (unsigned long) strlen(error->address);
@@ -459,14 +755,14 @@ DBX_EXTFUN(int) mg_tcpchild_init(int count, ydb_string_t *key, ydb_string_t *opt
 }
 
 
-DBX_EXTFUN(int) mg_tcpchild_send(int count, ydb_string_t *data, ydb_int_t flush, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_tcpchild_send(int count, ydb_string_t *data, ydb_int_t flush, ydb_string_t *error)
 {
    int rc;
 
    error->address[0] = '\0';
    error->length = 0;
 
-   rc = mg_tcpsrv_send(data->address, (int) data->length, (int) flush, (char *) error->address);
+   rc = mgpw_tcpsrv_send(data->address, (int) data->length, (int) flush, (char *) error->address);
    if (error->address[0]) {
       error->length = (unsigned long) strlen(error->address);
    }
@@ -475,7 +771,7 @@ DBX_EXTFUN(int) mg_tcpchild_send(int count, ydb_string_t *data, ydb_int_t flush,
 }
 
 
-DBX_EXTFUN(int) mg_tcpchild_recv(int count, ydb_string_t *data, ydb_int_t len, ydb_int_t timeout, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_tcpchild_recv(int count, ydb_string_t *data, ydb_int_t len, ydb_int_t timeout, ydb_string_t *error)
 {
    int rc;
    int dsize;
@@ -486,7 +782,7 @@ DBX_EXTFUN(int) mg_tcpchild_recv(int count, ydb_string_t *data, ydb_int_t len, y
    data->length = 0;
    dsize = (WORK_BUFFER - 1);
 
-   rc = mg_tcpsrv_recv(data->address, (int) dsize, (int) len, (int) timeout, error->address);
+   rc = mgpw_tcpsrv_recv(data->address, (int) dsize, (int) len, (int) timeout, error->address);
    if (error->address[0]) {
       error->length = (unsigned long) strlen(error->address);
    }
@@ -498,7 +794,7 @@ DBX_EXTFUN(int) mg_tcpchild_recv(int count, ydb_string_t *data, ydb_int_t len, y
 }
 
 
-DBX_EXTFUN(int) mg_tcpchild_recv_ascii(int count, ydb_int_t *data, ydb_int_t timeout, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_tcpchild_recv_ascii(int count, ydb_int_t *data, ydb_int_t timeout, ydb_string_t *error)
 {
    int rc;
    char buffer[8];
@@ -506,7 +802,7 @@ DBX_EXTFUN(int) mg_tcpchild_recv_ascii(int count, ydb_int_t *data, ydb_int_t tim
    error->address[0] = '\0';
    error->length = 0;
 
-   rc = mg_tcpsrv_recv(buffer, (int) 7, (int) 1, (int) timeout, error->address);
+   rc = mgpw_tcpsrv_recv(buffer, (int) 7, (int) 1, (int) timeout, error->address);
    if (error->address[0]) {
       error->length = (unsigned long) strlen(error->address);
    }
@@ -518,7 +814,7 @@ DBX_EXTFUN(int) mg_tcpchild_recv_ascii(int count, ydb_int_t *data, ydb_int_t tim
 }
 
 
-DBX_EXTFUN(int) mg_tcpchild_recv_message(int count, ydb_string_t *data, ydb_int_t *len, ydb_int_t *cmnd, ydb_int_t timeout, ydb_string_t *error)
+MGPW_EXTFUN(int) mg_tcpchild_recv_message(int count, ydb_string_t *data, ydb_int_t *len, ydb_int_t *cmnd, ydb_int_t timeout, ydb_string_t *error)
 {
    int rc;
    int dsize;
@@ -529,7 +825,7 @@ DBX_EXTFUN(int) mg_tcpchild_recv_message(int count, ydb_string_t *data, ydb_int_
    data->length = 0;
    dsize = (WORK_BUFFER - 1);
 
-   rc = mg_tcpsrv_recv_message(data->address, (int) dsize, (int *) len, (int *) cmnd, (int) timeout, error->address);
+   rc = mgpw_tcpsrv_recv_message(data->address, (int) dsize, (int *) len, (int *) cmnd, (int) timeout, error->address);
    if (error->address[0]) {
       error->length = (unsigned long) strlen(error->address);
    }
@@ -541,21 +837,21 @@ DBX_EXTFUN(int) mg_tcpchild_recv_message(int count, ydb_string_t *data, ydb_int_
 }
 
 
-DBX_EXTFUN(int) mg_tcpchild_close(int count)
+MGPW_EXTFUN(int) mg_tcpchild_close(int count)
 {
    int rc;
 
-   rc = mg_tcpsrv_close("");
+   rc = mgpw_tcpsrv_close("");
 
    return rc;
 }
 #endif /* #if !defined(_WIN32) */
 
 
-int crypt_load_library(DBXCRYPTSO *p_crypt_so)
+int mgpw_crypt_load_library(MGPWCRYPTSO *p_crypt_so)
 {
    int n, result;
-   char primlib[DBX_ERROR_SIZE], primerr[DBX_ERROR_SIZE];
+   char primlib[MGPW_ERROR_SIZE], primerr[MGPW_ERROR_SIZE];
    char fun[64];
    char *libnam[16];
 
@@ -567,14 +863,14 @@ int crypt_load_library(DBXCRYPTSO *p_crypt_so)
    }
    else {
 #if defined(_WIN32)
-      libnam[n ++] = (char *) DBX_CRYPT_DLL;
+      libnam[n ++] = (char *) MGPW_CRYPT_DLL;
 #else
 #if defined(MACOSX)
-      libnam[n ++] = (char *) DBX_CRYPT_DYLIB;
-      libnam[n ++] = (char *) DBX_CRYPT_SO;
+      libnam[n ++] = (char *) MGPW_CRYPT_DYLIB;
+      libnam[n ++] = (char *) MGPW_CRYPT_SO;
 #else
-      libnam[n ++] = (char *) DBX_CRYPT_SO;
-      libnam[n ++] = (char *) DBX_CRYPT_DYLIB;
+      libnam[n ++] = (char *) MGPW_CRYPT_SO;
+      libnam[n ++] = (char *) MGPW_CRYPT_DYLIB;
 #endif
 #endif
    }
@@ -583,7 +879,7 @@ int crypt_load_library(DBXCRYPTSO *p_crypt_so)
 
    for (n = 0; libnam[n]; n ++) {
 
-      p_crypt_so->p_library = mg_dso_load(libnam[n]);
+      p_crypt_so->p_library = mgpw_dso_load(libnam[n]);
       if (p_crypt_so->p_library) {
          if (!p_crypt_so->libnam[0]) {
             strcpy(p_crypt_so->libnam, libnam[n]);
@@ -611,12 +907,12 @@ int crypt_load_library(DBXCRYPTSO *p_crypt_so)
                         0,
                         NULL 
                         );
-         if (lpMsgBuf && len1 > 0 && (DBX_ERROR_SIZE - len2) > 30) {
-            strncpy(primerr, (const char *) lpMsgBuf, DBX_ERROR_SIZE - 1);
+         if (lpMsgBuf && len1 > 0 && (MGPW_ERROR_SIZE - len2) > 30) {
+            strncpy(primerr, (const char *) lpMsgBuf, MGPW_ERROR_SIZE - 1);
             p = strstr(primerr, "\r\n");
             if (p)
                *p = '\0';
-            len1 = (DBX_ERROR_SIZE - (len2 + 10));
+            len1 = (MGPW_ERROR_SIZE - (len2 + 10));
             if (len1 < 1)
                len1 = 0;
             primerr[len1] = '\0';
@@ -637,9 +933,9 @@ int crypt_load_library(DBXCRYPTSO *p_crypt_so)
          sprintf(primerr, "Cannot load %s library: Error Code: %d", p_crypt_so->dbname, errno);
          len2 = strlen(error_message);
          if (p) {
-            strncpy(primerr, p, DBX_ERROR_SIZE - 1);
-            primerr[DBX_ERROR_SIZE - 1] = '\0';
-            len1 = (DBX_ERROR_SIZE - (len2 + 10));
+            strncpy(primerr, p, MGPW_ERROR_SIZE - 1);
+            primerr[MGPW_ERROR_SIZE - 1] = '\0';
+            len1 = (MGPW_ERROR_SIZE - (len2 + 10));
             if (len1 < 1)
                len1 = 0;
             primerr[len1] = '\0';
@@ -652,76 +948,76 @@ int crypt_load_library(DBXCRYPTSO *p_crypt_so)
    }
 
    if (!p_crypt_so->p_library) {
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
 
    strcpy(fun, "OpenSSL_version");
-   p_crypt_so->p_OpenSSL_version = (const char * (*) (int)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_OpenSSL_version = (const char * (*) (int)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_OpenSSL_version) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
 
    strcpy(fun, "HMAC");
-   p_crypt_so->p_HMAC = (unsigned char * (*) (const EVP_MD *, const void *, int, const unsigned char *, int, unsigned char *, unsigned int *)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_HMAC = (unsigned char * (*) (const EVP_MD *, const void *, int, const unsigned char *, int, unsigned char *, unsigned int *)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_HMAC) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
    strcpy(fun, "EVP_sha1");
-   p_crypt_so->p_EVP_sha1 = (const EVP_MD * (*) (void)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_EVP_sha1 = (const EVP_MD * (*) (void)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_EVP_sha1) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
    strcpy(fun, "EVP_sha256");
-   p_crypt_so->p_EVP_sha256 = (const EVP_MD * (*) (void)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_EVP_sha256 = (const EVP_MD * (*) (void)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_EVP_sha256) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
    strcpy(fun, "EVP_sha512");
-   p_crypt_so->p_EVP_sha512 = (const EVP_MD * (*) (void)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_EVP_sha512 = (const EVP_MD * (*) (void)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_EVP_sha512) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
 
    strcpy(fun, "EVP_md5");
-   p_crypt_so->p_EVP_md5 = (const EVP_MD * (*) (void)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_EVP_md5 = (const EVP_MD * (*) (void)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_EVP_md5) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
 
    strcpy(fun, "SHA1");
-   p_crypt_so->p_SHA1 = (unsigned char * (*) (const unsigned char *, unsigned long, unsigned char *)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_SHA1 = (unsigned char * (*) (const unsigned char *, unsigned long, unsigned char *)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_SHA1) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
    strcpy(fun, "SHA256");
-   p_crypt_so->p_SHA256 = (unsigned char * (*) (const unsigned char *, unsigned long, unsigned char *)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_SHA256 = (unsigned char * (*) (const unsigned char *, unsigned long, unsigned char *)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_SHA256) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
    strcpy(fun, "SHA512");
-   p_crypt_so->p_SHA512 = (unsigned char * (*) (const unsigned char *, unsigned long, unsigned char *)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_SHA512 = (unsigned char * (*) (const unsigned char *, unsigned long, unsigned char *)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_SHA512) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
    strcpy(fun, "MD5");
-   p_crypt_so->p_MD5 = (unsigned char * (*) (const unsigned char *, unsigned long, unsigned char *)) mg_dso_sym(p_crypt_so->p_library, (char *) fun);
+   p_crypt_so->p_MD5 = (unsigned char * (*) (const unsigned char *, unsigned long, unsigned char *)) mgpw_dso_sym(p_crypt_so->p_library, (char *) fun);
    if (!p_crypt_so->p_MD5) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_crypt_so->dbname, p_crypt_so->libnam, fun);
-      goto crypt_load_library;
+      goto mgpw_crypt_load_library;
    }
 
    p_crypt_so->loaded = 1;
 
-crypt_load_library:
+mgpw_crypt_load_library:
 
    if (error_message[0]) {
       p_crypt_so->loaded = 0;
@@ -734,10 +1030,11 @@ crypt_load_library:
 }
 
 
-int ydb_load_library(DBXYDBSO *p_ydb_so)
+#if 0
+int ydb_load_library(MGPWYDBSO *p_ydb_so)
 {
    int n, len, result;
-   char primlib[DBX_ERROR_SIZE], primerr[DBX_ERROR_SIZE];
+   char primlib[MGPW_ERROR_SIZE], primerr[MGPW_ERROR_SIZE];
    char fun[64];
    char *libnam[16];
 
@@ -752,14 +1049,14 @@ int ydb_load_library(DBXYDBSO *p_ydb_so)
 
    n = 0;
 #if defined(_WIN32)
-   libnam[n ++] = (char *) DBX_YDB_DLL;
+   libnam[n ++] = (char *) MGPW_YDB_DLL;
 #else
 #if defined(MACOSX)
-   libnam[n ++] = (char *) DBX_YDB_DYLIB;
-   libnam[n ++] = (char *) DBX_YDB_SO;
+   libnam[n ++] = (char *) MGPW_YDB_DYLIB;
+   libnam[n ++] = (char *) MGPW_YDB_SO;
 #else
-   libnam[n ++] = (char *) DBX_YDB_SO;
-   libnam[n ++] = (char *) DBX_YDB_DYLIB;
+   libnam[n ++] = (char *) MGPW_YDB_SO;
+   libnam[n ++] = (char *) MGPW_YDB_DYLIB;
 #endif
 #endif
 
@@ -773,7 +1070,7 @@ int ydb_load_library(DBXYDBSO *p_ydb_so)
          strcpy(primlib, p_ydb_so->libnam);
       }
 
-      p_ydb_so->p_library = mg_dso_load(p_ydb_so->libnam);
+      p_ydb_so->p_library = mgpw_dso_load(p_ydb_so->libnam);
       if (p_ydb_so->p_library) {
          break;
       }
@@ -798,12 +1095,12 @@ int ydb_load_library(DBXYDBSO *p_ydb_so)
                         0,
                         NULL 
                         );
-         if (lpMsgBuf && len1 > 0 && (DBX_ERROR_SIZE - len2) > 30) {
-            strncpy(primerr, (const char *) lpMsgBuf, DBX_ERROR_SIZE - 1);
+         if (lpMsgBuf && len1 > 0 && (MGPW_ERROR_SIZE - len2) > 30) {
+            strncpy(primerr, (const char *) lpMsgBuf, MGPW_ERROR_SIZE - 1);
             p = strstr(primerr, "\r\n");
             if (p)
                *p = '\0';
-            len1 = (DBX_ERROR_SIZE - (len2 + 10));
+            len1 = (MGPW_ERROR_SIZE - (len2 + 10));
             if (len1 < 1)
                len1 = 0;
             primerr[len1] = '\0';
@@ -823,9 +1120,9 @@ int ydb_load_library(DBXYDBSO *p_ydb_so)
          sprintf(primerr, "Cannot load %s library: Error Code: %d", p_ydb_so->dbname, errno);
          len2 = strlen(error_message);
          if (p) {
-            strncpy(primerr, p, DBX_ERROR_SIZE - 1);
-            primerr[DBX_ERROR_SIZE - 1] = '\0';
-            len1 = (DBX_ERROR_SIZE - (len2 + 10));
+            strncpy(primerr, p, MGPW_ERROR_SIZE - 1);
+            primerr[MGPW_ERROR_SIZE - 1] = '\0';
+            len1 = (MGPW_ERROR_SIZE - (len2 + 10));
             if (len1 < 1)
                len1 = 0;
             primerr[len1] = '\0';
@@ -842,115 +1139,115 @@ int ydb_load_library(DBXYDBSO *p_ydb_so)
    }
 
    sprintf(fun, "%s_init", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_init = (int (*) (void)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_init = (int (*) (void)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_init) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_exit", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_exit = (int (*) (void)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_exit = (int (*) (void)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_exit) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_malloc", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_malloc = (int (*) (size_t)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_malloc = (int (*) (size_t)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_malloc) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_free", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_free = (int (*) (void *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_free = (int (*) (void *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_free) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_data_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_data_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, unsigned int *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_data_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, unsigned int *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_data_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_delete_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_delete_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_delete_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_delete_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_set_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_set_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_set_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_set_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_get_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_get_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_get_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_get_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_subscript_next_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_subscript_next_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_subscript_next_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_subscript_next_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_subscript_previous_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_subscript_previous_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_subscript_previous_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_subscript_previous_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_node_next_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_node_next_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int *, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_node_next_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_node_next_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_node_previous_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_node_previous_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int *, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_node_previous_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_node_previous_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_incr_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_incr_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_incr_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_incr_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_ci", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_ci = (int (*) (const char *, ...)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_ci = (int (*) (const char *, ...)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_ci) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
    sprintf(fun, "%s_cip", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_cip = (int (*) (ci_name_descriptor *, ...)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_cip = (int (*) (ci_name_descriptor *, ...)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_cip) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
 
    sprintf(fun, "%s_lock_incr_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_lock_incr_s = (int (*) (unsigned long long, ydb_buffer_t *, int, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_lock_incr_s = (int (*) (unsigned long long, ydb_buffer_t *, int, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_lock_incr_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
 
    sprintf(fun, "%s_lock_decr_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_lock_decr_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_lock_decr_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
    if (!p_ydb_so->p_ydb_lock_decr_s) {
       sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
       goto ydb_load_library_exit;
    }
 
    sprintf(fun, "%s_zstatus", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_zstatus = (void (*) (ydb_char_t *, ydb_long_t)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_zstatus = (void (*) (ydb_char_t *, ydb_long_t)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
 
    sprintf(fun, "%s_tp_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_tp_s = (int (*) (ydb_tpfnptr_t, void *, const char *, int, ydb_buffer_t *)) mg_dso_sym(p_ydb_so->p_library, (char *) fun);
+   p_ydb_so->p_ydb_tp_s = (int (*) (ydb_tpfnptr_t, void *, const char *, int, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
 
    p_ydb_so->loaded = 1;
 
@@ -965,9 +1262,10 @@ ydb_load_library_exit:
 
    return YDB_OK;
 }
+#endif
 
 
-int mg_set_size(unsigned char *str, unsigned long data_len)
+int mgpw_set_size(unsigned char *str, unsigned long data_len)
 {
    str[0] = (unsigned char) (data_len >> 0);
    str[1] = (unsigned char) (data_len >> 8);
@@ -978,7 +1276,7 @@ int mg_set_size(unsigned char *str, unsigned long data_len)
 }
 
 
-unsigned long mg_get_size(unsigned char *str)
+unsigned long mgpw_get_size(unsigned char *str)
 {
    unsigned long size;
 
@@ -987,21 +1285,21 @@ unsigned long mg_get_size(unsigned char *str)
 }
 
 
-void * mg_realloc(void *p, int curr_size, int new_size, short id)
+void * mgpw_realloc(void *p, int curr_size, int new_size, short id)
 {
-   if (dbx_ext_realloc) {
-      p = (void *) dbx_ext_realloc((void *) p, (unsigned long) new_size);
+   if (mgpw_ext_realloc) {
+      p = (void *) mgpw_ext_realloc((void *) p, (unsigned long) new_size);
    }
    else {
       if (new_size >= curr_size) {
          if (p) {
-            mg_free((void *) p, 0);
+            mgpw_free((void *) p, 0);
          }
 
 #if defined(_WIN32)
          p = (void *) HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, new_size + 32);
 #else
-         p = (void *) mg_malloc(new_size, id);
+         p = (void *) mgpw_malloc(new_size, id);
 #endif
       }
    }
@@ -1012,12 +1310,12 @@ void * mg_realloc(void *p, int curr_size, int new_size, short id)
 }
 
 
-void * mg_malloc(int size, short id)
+void * mgpw_malloc(int size, short id)
 {
    void *p;
 
-   if (dbx_ext_malloc) {
-      p = (void *) dbx_ext_malloc((unsigned long) size);
+   if (mgpw_ext_malloc) {
+      p = (void *) mgpw_ext_malloc((unsigned long) size);
    }
    else {
 #if defined(_WIN32)
@@ -1027,18 +1325,18 @@ void * mg_malloc(int size, short id)
 #endif
    }
 
-   /* printf("\nmg_malloc: size=%d; id=%d; p=%p;", size, id, p); */
+   /* printf("\nmgpw_malloc: size=%d; id=%d; p=%p;", size, id, p); */
 
    return p;
 }
 
 
-int mg_free(void *p, short id)
+int mgpw_free(void *p, short id)
 {
-   /* printf("\nmg_free: id=%d; p=%p;", id, p); */
+   /* printf("\nmgpw_free: id=%d; p=%p;", id, p); */
 
-   if (dbx_ext_free) {
-      dbx_ext_free((void *) p);
+   if (mgpw_ext_free) {
+      mgpw_ext_free((void *) p);
    }
    else {
 #if defined(_WIN32)
@@ -1052,7 +1350,7 @@ int mg_free(void *p, short id)
 }
 
 
-int mg_lcase(char *string)
+int mgpw_lcase(char *string)
 {
 #ifdef _UNICODE
 
@@ -1076,7 +1374,7 @@ int mg_lcase(char *string)
 }
 
 
-int mg_log_init(DBXLOG *p_log)
+int mgpw_log_init(MGPWLOG *p_log)
 {
    p_log->log_errors = 0;
    p_log->log_file[0] = '\0';
@@ -1086,7 +1384,7 @@ int mg_log_init(DBXLOG *p_log)
 }
 
 
-int mg_log_event(DBXLOG *p_log, char *message, char *title, int level)
+int mgpw_log_event(MGPWLOG *p_log, char *message, char *title, int level)
 {
    int len, n;
    char timestr[64], heading[256], buffer[2048];
@@ -1109,7 +1407,7 @@ int mg_log_event(DBXLOG *p_log, char *message, char *title, int level)
       }
    }
 
-   sprintf(heading, ">>> Time: %s; Build: %s pid=%lu;tid=%lu;", timestr, DBX_VERSION, (unsigned long) mg_current_process_id(), (unsigned long) mg_current_thread_id());
+   sprintf(heading, ">>> Time: %s; Build: %s pid=%lu;tid=%lu;", timestr, MGPW_VERSION, (unsigned long) mgpw_current_process_id(), (unsigned long) mgpw_current_thread_id());
 
    len = (int) strlen(heading) + (int) strlen(title) + (int) strlen(message) + 20;
 
@@ -1173,7 +1471,7 @@ int mg_log_event(DBXLOG *p_log, char *message, char *title, int level)
 }
 
 
-int mg_log_buffer(DBXLOG *p_log, char *buffer, int buffer_len, char *title, int level)
+int mgpw_log_buffer(MGPWLOG *p_log, char *buffer, int buffer_len, char *title, int level)
 {
    unsigned int c, len, strt;
    int n, n1, nc, size;
@@ -1217,7 +1515,7 @@ int mg_log_buffer(DBXLOG *p_log, char *buffer, int buffer_len, char *title, int 
       p[buffer_len] = '\0';
    }
 
-   mg_log_event(p_log, (char *) p, title, level);
+   mgpw_log_event(p_log, (char *) p, title, level);
 
    free((void *) p);
 
@@ -1225,9 +1523,9 @@ int mg_log_buffer(DBXLOG *p_log, char *buffer, int buffer_len, char *title, int 
 }
 
 
-DBXPLIB mg_dso_load(char * library)
+MGPWPLIB mgpw_dso_load(char * library)
 {
-   DBXPLIB p_library;
+   MGPWPLIB p_library;
 
 #if defined(_WIN32)
    p_library = LoadLibraryA(library);
@@ -1244,9 +1542,9 @@ DBXPLIB mg_dso_load(char * library)
 }
 
 
-DBXPROC mg_dso_sym(DBXPLIB p_library, char * symbol)
+MGPWPROC mgpw_dso_sym(MGPWPLIB p_library, char * symbol)
 {
-   DBXPROC p_proc;
+   MGPWPROC p_proc;
 
 #if defined(_WIN32)
    p_proc = GetProcAddress(p_library, symbol);
@@ -1259,7 +1557,7 @@ DBXPROC mg_dso_sym(DBXPLIB p_library, char * symbol)
 
 
 
-int mg_dso_unload(DBXPLIB p_library)
+int mgpw_dso_unload(MGPWPLIB p_library)
 {
 
 #if defined(_WIN32)
@@ -1272,17 +1570,17 @@ int mg_dso_unload(DBXPLIB p_library)
 }
 
 
-DBXTHID mg_current_thread_id(void)
+MGPWTHID mgpw_current_thread_id(void)
 {
 #if defined(_WIN32)
-   return (DBXTHID) GetCurrentThreadId();
+   return (MGPWTHID) GetCurrentThreadId();
 #else
-   return (DBXTHID) pthread_self();
+   return (MGPWTHID) pthread_self();
 #endif
 }
 
 
-unsigned long mg_current_process_id(void)
+unsigned long mgpw_current_process_id(void)
 {
 #if defined(_WIN32)
    return (unsigned long) GetCurrentProcessId();
@@ -1292,7 +1590,7 @@ unsigned long mg_current_process_id(void)
 }
 
 
-int mg_mutex_create(DBXMUTEX *p_mutex)
+int mgpw_mutex_create(MGPWMUTEX *p_mutex)
 {
    int result;
 
@@ -1317,10 +1615,10 @@ int mg_mutex_create(DBXMUTEX *p_mutex)
 
 
 
-int mg_mutex_lock(DBXMUTEX *p_mutex, int timeout)
+int mgpw_mutex_lock(MGPWMUTEX *p_mutex, int timeout)
 {
    int result;
-   DBXTHID tid;
+   MGPWTHID tid;
 #ifdef _WIN32
    DWORD result_wait;
 #endif
@@ -1331,7 +1629,7 @@ int mg_mutex_lock(DBXMUTEX *p_mutex, int timeout)
       return -1;
    }
 
-   tid = mg_current_thread_id();
+   tid = mgpw_current_thread_id();
    if (p_mutex->thid == tid) {
       p_mutex->stack ++;
       /* printf("\r\n thread already owns lock : thid=%lu; stack=%d;\r\n", (unsigned long) tid, p_mutex->stack); */
@@ -1350,19 +1648,19 @@ int mg_mutex_lock(DBXMUTEX *p_mutex, int timeout)
       result = 0;
    }
    else if (result_wait == WAIT_ABANDONED) {
-      printf("\r\nmg_mutex_lock: Returned WAIT_ABANDONED state");
+      printf("\r\nmgpw_mutex_lock: Returned WAIT_ABANDONED state");
       result = -1;
    }
    else if (result_wait == WAIT_TIMEOUT) {
-      printf("\r\nmg_mutex_lock: Returned WAIT_TIMEOUT state");
+      printf("\r\nmgpw_mutex_lock: Returned WAIT_TIMEOUT state");
       result = -1;
    }
    else if (result_wait == WAIT_FAILED) {
-      printf("\r\nmg_mutex_lock: Returned WAIT_FAILED state: Error Code: %d", GetLastError());
+      printf("\r\nmgpw_mutex_lock: Returned WAIT_FAILED state: Error Code: %d", GetLastError());
       result = -1;
    }
    else {
-      printf("\r\nmg_mutex_lock: Returned Unrecognized state: %d", result_wait);
+      printf("\r\nmgpw_mutex_lock: Returned Unrecognized state: %d", result_wait);
       result = -1;
    }
 #else
@@ -1376,10 +1674,10 @@ int mg_mutex_lock(DBXMUTEX *p_mutex, int timeout)
 }
 
 
-int mg_mutex_unlock(DBXMUTEX *p_mutex)
+int mgpw_mutex_unlock(MGPWMUTEX *p_mutex)
 {
    int result;
-   DBXTHID tid;
+   MGPWTHID tid;
 
    result = 0;
 
@@ -1387,7 +1685,7 @@ int mg_mutex_unlock(DBXMUTEX *p_mutex)
       return -1;
    }
 
-   tid = mg_current_thread_id();
+   tid = mgpw_current_thread_id();
    if (p_mutex->thid == tid && p_mutex->stack) {
       /* printf("\r\n thread has stacked locks : thid=%lu; stack=%d;\r\n", (unsigned long) tid, p_mutex->stack); */
       p_mutex->stack --;
@@ -1407,7 +1705,7 @@ int mg_mutex_unlock(DBXMUTEX *p_mutex)
 }
 
 
-int mg_mutex_destroy(DBXMUTEX *p_mutex)
+int mgpw_mutex_destroy(MGPWMUTEX *p_mutex)
 {
    int result;
 
@@ -1428,7 +1726,7 @@ int mg_mutex_destroy(DBXMUTEX *p_mutex)
 }
 
 
-int mg_init_critical_section(void *p_crit)
+int mgpw_init_critical_section(void *p_crit)
 {
 #if defined(_WIN32)
    InitializeCriticalSection((LPCRITICAL_SECTION) p_crit);
@@ -1438,7 +1736,7 @@ int mg_init_critical_section(void *p_crit)
 }
 
 
-int mg_delete_critical_section(void *p_crit)
+int mgpw_delete_critical_section(void *p_crit)
 {
 #if defined(_WIN32)
    DeleteCriticalSection((LPCRITICAL_SECTION) p_crit);
@@ -1448,7 +1746,7 @@ int mg_delete_critical_section(void *p_crit)
 }
 
 
-int mg_enter_critical_section(void *p_crit)
+int mgpw_enter_critical_section(void *p_crit)
 {
    int result;
 
@@ -1462,7 +1760,7 @@ int mg_enter_critical_section(void *p_crit)
 }
 
 
-int mg_leave_critical_section(void *p_crit)
+int mgpw_leave_critical_section(void *p_crit)
 {
    int result;
 
@@ -1476,7 +1774,7 @@ int mg_leave_critical_section(void *p_crit)
 }
 
 
-int mg_sleep(unsigned long msecs)
+int mgpw_sleep(unsigned long msecs)
 {
 #if defined(_WIN32)
 
@@ -1515,7 +1813,7 @@ int mg_sleep(unsigned long msecs)
 }
 
 
-char mg_b64_ntc(unsigned char n)
+char mgpw_b64_ntc(unsigned char n)
 {
    if (n < 26)
       return 'A' + n;
@@ -1531,7 +1829,7 @@ char mg_b64_ntc(unsigned char n)
 }
 
 
-unsigned char mg_b64_ctn(char c)
+unsigned char mgpw_b64_ctn(char c)
 {
 
    if (c == '/')
@@ -1550,7 +1848,7 @@ unsigned char mg_b64_ctn(char c)
 }
 
 
-int mg_b64_encode(char *from, int length, char *to, int quads)
+int mgpw_b64_encode(char *from, int length, char *to, int quads)
 {
    int i = 0;
    char *tot = to;
@@ -1560,36 +1858,36 @@ int mg_b64_encode(char *from, int length, char *to, int quads)
 
    while (i < length) {
       c = from[i];
-      *to++ = (char) mg_b64_ntc((unsigned char) (c / 4));
+      *to++ = (char) mgpw_b64_ntc((unsigned char) (c / 4));
       c = c * 64;
      
       i++;
 
       if (i >= length) {
-         *to++ = mg_b64_ntc((unsigned char) (c / 4));
+         *to++ = mgpw_b64_ntc((unsigned char) (c / 4));
          *to++ = '=';
          *to++ = '=';
          break;
       }
       d = from[i];
-      *to++ = mg_b64_ntc((unsigned char) (c / 4 + d / 16));
+      *to++ = mgpw_b64_ntc((unsigned char) (c / 4 + d / 16));
       d = d * 16;
 
       i++;
 
 
       if (i >= length) {
-         *to++ = mg_b64_ntc((unsigned char) (d / 4));
+         *to++ = mgpw_b64_ntc((unsigned char) (d / 4));
          *to++ = '=';
          break;
       }
       c = from[i];
-      *to++ = mg_b64_ntc((unsigned char) (d / 4 + c / 64));
+      *to++ = mgpw_b64_ntc((unsigned char) (d / 4 + c / 64));
       c=c * 4;
 
       i++;
 
-      *to++ = mg_b64_ntc((unsigned char) (c / 4));
+      *to++ = mgpw_b64_ntc((unsigned char) (c / 4));
 
       qc ++;
       if (qc == quads) {
@@ -1602,7 +1900,7 @@ int mg_b64_encode(char *from, int length, char *to, int quads)
 }
 
 
-int mg_b64_decode(char *from, int length, char *to)
+int mgpw_b64_decode(char *from, int length, char *to)
 {
    unsigned char c, d, e, f;
    char A, B, C;
@@ -1616,13 +1914,13 @@ int mg_b64_decode(char *from, int length, char *to)
       c = d = e = f = 100;
 
       while ((c == 100) && (i < length))
-         c = mg_b64_ctn(from[i++]);
+         c = mgpw_b64_ctn(from[i++]);
       while ((d == 100) && (i < length))
-         d = mg_b64_ctn(from[i++]);
+         d = mgpw_b64_ctn(from[i++]);
       while ((e == 100) && (i < length))
-         e = mg_b64_ctn(from[i++]);
+         e = mgpw_b64_ctn(from[i++]);
       while ((f == 100) && (i < length))
-         f = mg_b64_ctn(from[i++]);
+         f = mgpw_b64_ctn(from[i++]);
 
       if (f == 100)
          return -1;
@@ -1661,7 +1959,7 @@ int mg_b64_decode(char *from, int length, char *to)
 }
 
 
-int mg_b64_enc_buffer_size(int l, int q)
+int mgpw_b64_enc_buffer_size(int l, int q)
 {
    int ret;
 
@@ -1676,20 +1974,20 @@ int mg_b64_enc_buffer_size(int l, int q)
 }
 
 
-int mg_b64_strip_enc_buffer(char *buf, int length)
+int mgpw_b64_strip_enc_buffer(char *buf, int length)
 {
    int i;
    int ret = 0;
 
    for (i = 0;i < length;i ++)
-      if (mg_b64_ctn(buf[i]) != 100)
+      if (mgpw_b64_ctn(buf[i]) != 100)
          buf[ret++] = buf[i];
  
    return ret;
 }
 
 
-int mg_hex_encode(char *from, int length, char *to)
+int mgpw_hex_encode(char *from, int length, char *to)
 {
    int n, len;
    unsigned int c, c1, c2;
@@ -1707,7 +2005,7 @@ int mg_hex_encode(char *from, int length, char *to)
 }
 
 
-unsigned long mg_crc32_checksum(char *buffer, size_t len)
+unsigned long mgpw_crc32_checksum(char *buffer, size_t len)
 {
    register unsigned long oldcrc32;
 
@@ -1721,7 +2019,7 @@ unsigned long mg_crc32_checksum(char *buffer, size_t len)
 }
 
 #if !defined(_WIN32)
-void * mg_stdin_listener(void *pargs)
+void * mgpw_stdin_listener(void *pargs)
 {
    int rc, clilen;
    int fd;
@@ -1733,13 +2031,13 @@ void * mg_stdin_listener(void *pargs)
    dup2(pipefd[0], STDIN_FILENO);
    close(pipefd[0]);
 
-   pthread_mutex_lock(&dbx_cond_mutex);
-   dbx_cond_flag = 1;
-   pthread_cond_broadcast(&dbx_cond);
-   pthread_mutex_unlock(&dbx_cond_mutex);
+   pthread_mutex_lock(&mgpw_cond_mutex);
+   mgpw_cond_flag = 1;
+   pthread_cond_broadcast(&mgpw_cond);
+   pthread_mutex_unlock(&mgpw_cond_mutex);
 
    while (1) {
-      rc = mg_tcpsrv_recv(buffer, 255, 0, 0, error);
+      rc = mgpw_tcpsrv_recv(buffer, 255, 0, 0, error);
       if (rc < 0 && errno == EINTR) {
          continue;
       }
@@ -1750,18 +2048,18 @@ void * mg_stdin_listener(void *pargs)
       rc = write(pipefd[1], buffer, rc);
 
       /* fflush(stdin); - not standard */
-      /* mg_log_buffer(p_log, buffer, rc, "mg_stdin_listener", 0); */
+      /* mgpw_log_buffer(p_log, buffer, rc, "mgpw_stdin_listener", 0); */
    }
 
    dup2(fd, STDIN_FILENO);
 
-   /* mg_log_event(p_log, "exit", "mg_stdin_listener", 0); */
+   /* mgpw_log_event(p_log, "exit", "mgpw_stdin_listener", 0); */
 
    return NULL;
 }
 
 
-void * mg_stdout_listener(void *pargs)
+void * mgpw_stdout_listener(void *pargs)
 {
    int rc, clilen;
    int fd;
@@ -1773,10 +2071,10 @@ void * mg_stdout_listener(void *pargs)
    dup2(pipefd[1], STDOUT_FILENO);
    close(pipefd[1]);
 
-   pthread_mutex_lock(&dbx_cond_mutex);
-   dbx_cond_flag = 1;
-   pthread_cond_broadcast(&dbx_cond);
-   pthread_mutex_unlock(&dbx_cond_mutex);
+   pthread_mutex_lock(&mgpw_cond_mutex);
+   mgpw_cond_flag = 1;
+   pthread_cond_broadcast(&mgpw_cond);
+   pthread_mutex_unlock(&mgpw_cond_mutex);
 
    while (1) {
       fflush(stdout);
@@ -1789,29 +2087,29 @@ void * mg_stdout_listener(void *pargs)
       }
 
       buffer[rc] = '\0';
-      mg_tcpsrv_send(buffer, rc, 1, error);
-      /* mg_log_buffer(p_log, buffer, rc, "mg_stdout_listener", 0); */
+      mgpw_tcpsrv_send(buffer, rc, 1, error);
+      /* mgpw_log_buffer(p_log, buffer, rc, "mgpw_stdout_listener", 0); */
    }
 
    dup2(fd, STDOUT_FILENO);
 
-   /* mg_log_event(p_log, "exit", "mg_stdout_listener", 0); */
+   /* mgpw_log_event(p_log, "exit", "mgpw_stdout_listener", 0); */
 
    return NULL;
 }
 
 
-void * mg_domsrv_listener(void *pargs)
+void * mgpw_domsrv_listener(void *pargs)
 {
    int rc, clilen;
 
    unlink(p_tcpsrv->domsrv_name);
 
-   p_tcpsrv->domsrv_sockfd = mg_domsrv_init();
+   p_tcpsrv->domsrv_sockfd = mgpw_domsrv_init();
 
    if (p_tcpsrv->domsrv_sockfd < 0) {
       sprintf(error_message, "ERROR opening socket (%d)", errno);
-      mg_log_event(p_log, error_message, "mg_domsrv_init: error", 0);
+      mgpw_log_event(p_log, error_message, "mgpw_domsrv_init: error", 0);
       return NULL;
    }
 
@@ -1824,19 +2122,19 @@ void * mg_domsrv_listener(void *pargs)
 
       if (p_tcpsrv->domcli_sockfd < 0) {
          sprintf(error_message, "ERROR on accept (%d)", errno);
-         mg_log_event(p_log, error_message, "mg_domsrv_init: error", 0);
+         mgpw_log_event(p_log, error_message, "mgpw_domsrv_init: error", 0);
          break;
       }
-      rc = mg_domsrv_sendfd(0);
+      rc = mgpw_domsrv_sendfd(0);
    }
 
-   /* mg_log_event(p_log, "exit", "mg_domsrv_init", 0); */
+   /* mgpw_log_event(p_log, "exit", "mgpw_domsrv_init", 0); */
 
    return NULL;
 }
 
 
-int mg_domsrv_init()
+int mgpw_domsrv_init()
 {
    int rc;
 
@@ -1846,7 +2144,7 @@ int mg_domsrv_init()
 
    if (p_tcpsrv->domsrv_sockfd < 0) {
       sprintf(error_message, "ERROR opening socket (%d)", errno);
-      mg_log_event(p_log, error_message, "mg_domsrv_init: error", 0);
+      mgpw_log_event(p_log, error_message, "mgpw_domsrv_init: error", 0);
       return -1;
    }
 
@@ -1857,7 +2155,7 @@ int mg_domsrv_init()
 
    if (bind(p_tcpsrv->domsrv_sockfd, (struct sockaddr *) &(p_tcpsrv->domsrv_addr), sizeof(p_tcpsrv->domsrv_addr)) < 0) {
       sprintf(error_message, "ERROR on binding for domain socket %s (%d)", p_tcpsrv->domsrv_name, errno);
-      mg_log_event(p_log, error_message, "mg_domsrv_init: error", 0);
+      mgpw_log_event(p_log, error_message, "mgpw_domsrv_init: error", 0);
       close(p_tcpsrv->domsrv_sockfd);
       p_tcpsrv->domsrv_sockfd = -1;
       return -1;
@@ -1867,7 +2165,7 @@ int mg_domsrv_init()
 }
 
 
-int mg_domsrv_sendfd(int sockfd)
+int mgpw_domsrv_sendfd(int sockfd)
 {
    int rc, count;
    struct msghdr msg;
@@ -1885,13 +2183,13 @@ int mg_domsrv_sendfd(int sockfd)
    msg.msg_namelen = 0;
 
    rc = recv(p_tcpsrv->domcli_sockfd, buffer, 4, 0);
-   count = mg_get_size(buffer);
+   count = mgpw_get_size(buffer);
 
 /*
 {
    char buffer[256];
    sprintf(buffer, "send this socket index rc=%d; count=%d; errno=%d", rc, count, errno);
-   mg_log_event(p_log, buffer, "mg_domsrv_sendfd", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_domsrv_sendfd", 0);
 }
 */
    if (rc < 0) {
@@ -1918,7 +2216,7 @@ int mg_domsrv_sendfd(int sockfd)
 {
    char buffer[256];
    sprintf(buffer, "send this socket sockfd=%d rc=%d; errno=%d", sockfd, rc, errno);
-   mg_log_event(p_log, buffer, "mg_domsrv_sendfd result", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_domsrv_sendfd result", 0);
 }
 */
    close(sockfd);
@@ -1927,7 +2225,7 @@ int mg_domsrv_sendfd(int sockfd)
 }
 
 
-int mg_domsrv_recvfd(char *key, char *options, char *error)
+int mgpw_domsrv_recvfd(char *key, char *options, char *error)
 {
    int sfd, n, rc, sockfd, mapstdin;
    int flag = 1;
@@ -1942,41 +2240,41 @@ int mg_domsrv_recvfd(char *key, char *options, char *error)
    size_t stacksize, newstacksize;
 
    mapstdin = 0;
-   dbx_cond_flag = 0;
+   mgpw_cond_flag = 0;
    pthread_attr_init(&attr);
    pthread_attr_getstacksize(&attr, &stacksize);
    newstacksize = 0x40000; /* 262144 */
    pthread_attr_setstacksize(&attr, newstacksize);
 
-   rc = pthread_create(&(p_tcpsrv->stdout_tid), &attr, mg_stdout_listener, (void *) NULL);
+   rc = pthread_create(&(p_tcpsrv->stdout_tid), &attr, mgpw_stdout_listener, (void *) NULL);
    if (rc) {
-      sprintf(error, "ERROR creating thread for mg_stdout_listener (%d)", errno);
-      mg_log_event(p_log, error, "mg_tcpsrv_init: error", 0);
+      sprintf(error, "ERROR creating thread for mgpw_stdout_listener (%d)", errno);
+      mgpw_log_event(p_log, error, "mgpw_tcpsrv_init: error", 0);
       return YDB_FAILURE;
    }
-   pthread_mutex_lock(&dbx_cond_mutex);
-   while (!dbx_cond_flag) {
-      pthread_cond_wait(&dbx_cond, &dbx_cond_mutex);
+   pthread_mutex_lock(&mgpw_cond_mutex);
+   while (!mgpw_cond_flag) {
+      pthread_cond_wait(&mgpw_cond, &mgpw_cond_mutex);
    }
-   pthread_mutex_unlock(&dbx_cond_mutex);
+   pthread_mutex_unlock(&mgpw_cond_mutex);
 
    if (mapstdin) {
-      dbx_cond_flag = 0;
+      mgpw_cond_flag = 0;
       pthread_attr_init(&attr);
       pthread_attr_getstacksize(&attr, &stacksize);
       newstacksize = 0x40000; /* 262144 */
       pthread_attr_setstacksize(&attr, newstacksize);
-      rc = pthread_create(&(p_tcpsrv->stdout_tid), &attr, mg_stdin_listener, (void *) NULL);
+      rc = pthread_create(&(p_tcpsrv->stdout_tid), &attr, mgpw_stdin_listener, (void *) NULL);
       if (rc) {
-         sprintf(error, "ERROR creating thread for mg_stdin_listener (%d)", errno);
-         mg_log_event(p_log, error, "mg_tcpsrv_init: error", 0);
+         sprintf(error, "ERROR creating thread for mgpw_stdin_listener (%d)", errno);
+         mgpw_log_event(p_log, error, "mgpw_tcpsrv_init: error", 0);
          return YDB_FAILURE;
       }
-      pthread_mutex_lock(&dbx_cond_mutex);
-      while (!dbx_cond_flag) {
-         pthread_cond_wait(&dbx_cond, &dbx_cond_mutex);
+      pthread_mutex_lock(&mgpw_cond_mutex);
+      while (!mgpw_cond_flag) {
+         pthread_cond_wait(&mgpw_cond, &mgpw_cond_mutex);
       }
-      pthread_mutex_unlock(&dbx_cond_mutex);
+      pthread_mutex_unlock(&mgpw_cond_mutex);
    }
 
    p_tcpsrv->wbuffer_size = (WORK_BUFFER - 1);
@@ -1986,14 +2284,14 @@ int mg_domsrv_recvfd(char *key, char *options, char *error)
    p_tcpsrv->count = (int) strtol(key, NULL, 10);
    p = strstr(key, "|");
    if (!p) {
-      strcpy(error, "mg_domsrv_recvfd: bad key");
+      strcpy(error, "mgpw_domsrv_recvfd: bad key");
       return YDB_FAILURE;
    }
    p ++;
    p_tcpsrv->port = (int) strtol(p, NULL, 10);
    p = strstr(key, "|||");
    if (!p) {
-      strcpy(error, "mg_domsrv_recvfd: bad key");
+      strcpy(error, "mgpw_domsrv_recvfd: bad key");
       return YDB_FAILURE;
    }
    p += 3;
@@ -2005,8 +2303,8 @@ int mg_domsrv_recvfd(char *key, char *options, char *error)
 
    sfd = socket(AF_UNIX, SOCK_STREAM, 0);
    if (sfd == -1) {
-      sprintf(error, "mg_domsrv_recvfd: bad domain socket (%d)", errno);
-      mg_log_event(p_log, error, "mg_domsrv_recvfd: error", 0);
+      sprintf(error, "mgpw_domsrv_recvfd: bad domain socket (%d)", errno);
+      mgpw_log_event(p_log, error, "mgpw_domsrv_recvfd: error", 0);
       return YDB_FAILURE;
    }
 
@@ -2015,16 +2313,16 @@ int mg_domsrv_recvfd(char *key, char *options, char *error)
    strcpy(addr.sun_path, p_tcpsrv->domsrv_name);
 
    if (connect(sfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_un)) == -1) {
-      sprintf(error, "mg_domsrv_recvfd: cannot connect to domain socket (%d)", errno);
-      mg_log_event(p_log, error, "mg_domsrv_recvfd: error", 0);
+      sprintf(error, "mgpw_domsrv_recvfd: cannot connect to domain socket (%d)", errno);
+      mgpw_log_event(p_log, error, "mgpw_domsrv_recvfd: error", 0);
       return YDB_FAILURE;
    }
 
-   mg_set_size((unsigned char *) buffer, (unsigned long)  p_tcpsrv->count);
+   mgpw_set_size((unsigned char *) buffer, (unsigned long)  p_tcpsrv->count);
    rc = send(sfd, buffer, 4, 0);
    if (rc < 0) {
-      sprintf(error, "mg_domsrv_recvfd: cannot send index (%d)", errno);
-      mg_log_event(p_log, error, "mg_domsrv_recvfd: error", 0);
+      sprintf(error, "mgpw_domsrv_recvfd: cannot send index (%d)", errno);
+      mgpw_log_event(p_log, error, "mgpw_domsrv_recvfd: error", 0);
       return YDB_FAILURE;
    }
    io.iov_base = ptr;
@@ -2046,15 +2344,15 @@ int mg_domsrv_recvfd(char *key, char *options, char *error)
          break;
    }
    if (rc < 0) {
-      sprintf(error, "mg_domsrv_recvfd: cannot read from domain socket (%d)", errno);
-      mg_log_event(p_log, error, "mg_domsrv_recvfd: error", 0);
+      sprintf(error, "mgpw_domsrv_recvfd: cannot read from domain socket (%d)", errno);
+      mgpw_log_event(p_log, error, "mgpw_domsrv_recvfd: error", 0);
       return YDB_FAILURE;
    }
 
    cm = CMSG_FIRSTHDR(&msg);
    if (cm->cmsg_type != SCM_RIGHTS) {
-      sprintf(error, "mg_domsrv_recvfd: unknown mesasge type from domain socket (%d)", errno);
-      mg_log_event(p_log, error, "mg_domsrv_recvfd: error", 0);
+      sprintf(error, "mgpw_domsrv_recvfd: unknown mesasge type from domain socket (%d)", errno);
+      mgpw_log_event(p_log, error, "mgpw_domsrv_recvfd: error", 0);
       return YDB_FAILURE;
    }
 
@@ -2068,7 +2366,7 @@ int mg_domsrv_recvfd(char *key, char *options, char *error)
 {
    char buffer[256];
    sprintf(buffer, "send this socket sockfd=%d rc=%d; errno=%d", p_tcpsrv->cli_sockfd, rc, errno);
-   mg_log_event(p_log, buffer, "mg_domsrv_recvfd result: should have socket now 1", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_domsrv_recvfd result: should have socket now 1", 0);
 }
 */
 
@@ -2076,7 +2374,7 @@ int mg_domsrv_recvfd(char *key, char *options, char *error)
 #if 0
    if (1) {
       strcpy(p_ydb_so->libdir, "/usr/local/lib/yottadb/r130");
-      ydb_load_library(p_ydb_so);
+      //ydb_load_library(p_ydb_so);
    
       if (p_ydb_so->p_library) {
          rc = p_ydb_so->p_ydb_init();
@@ -2088,7 +2386,7 @@ int mg_domsrv_recvfd(char *key, char *options, char *error)
 }
 
 
-int mg_tcpsrv_init(int port, char *options, char *error)
+int mgpw_tcpsrv_init(int port, char *options, char *error)
 {
    int rc, n, sockfd, newsockfd, portno, clilen;
    const int on = 1;
@@ -2096,9 +2394,9 @@ int mg_tcpsrv_init(int port, char *options, char *error)
    pthread_attr_t attr;
    size_t stacksize, newstacksize;
 /*
-   mg_log_event(p_log, "initialise", "mg_tcpsrv_init", 0);
+   mgpw_log_event(p_log, "initialise", "mgpw_tcpsrv_init", 0);
 */
-   for (n = 0; n < DBX_MAX_CLIFD; n ++) {
+   for (n = 0; n < MGPW_MAX_CLIFD; n ++) {
       p_tcpsrv->new_sockfd[n] = 0;
    }
 
@@ -2108,7 +2406,7 @@ int mg_tcpsrv_init(int port, char *options, char *error)
 
    if (p_tcpsrv->srv_sockfd < 0) {
       sprintf(error, "ERROR opening socket (%d)", errno);
-      mg_log_event(p_log, error, "mg_tcpsrv_init: error", 0);
+      mgpw_log_event(p_log, error, "mgpw_tcpsrv_init: error", 0);
       return YDB_FAILURE;
    }
 
@@ -2122,12 +2420,12 @@ int mg_tcpsrv_init(int port, char *options, char *error)
 
    if (bind(p_tcpsrv->srv_sockfd, (struct sockaddr *) &(p_tcpsrv->srv_addr), sizeof(p_tcpsrv->srv_addr)) < 0) {
       sprintf(error, "ERROR on binding (%d)", errno);
-      mg_log_event(p_log, error, "mg_tcpsrv_init: error", 0);
+      mgpw_log_event(p_log, error, "mgpw_tcpsrv_init: error", 0);
       return YDB_FAILURE;
    }
    if (listen(p_tcpsrv->srv_sockfd, 5) < 0) {
       sprintf(error, "ERROR on listen (%d)", errno);
-      mg_log_event(p_log, error, "mg_tcpsrv_init: error", 0);
+      mgpw_log_event(p_log, error, "mgpw_tcpsrv_init: error", 0);
       return YDB_FAILURE;
    }
 
@@ -2136,17 +2434,17 @@ int mg_tcpsrv_init(int port, char *options, char *error)
 {
    char buffer[256];
    sprintf(buffer, "sfd: srv_sockfd=%d; errno=%d", p_tcpsrv->srv_sockfd, errno);
-   mg_log_event(p_log, p_tcpsrv->domsrv_name, "mg_tcpsrv_init", 0);
+   mgpw_log_event(p_log, p_tcpsrv->domsrv_name, "mgpw_tcpsrv_init", 0);
 }
 */
    pthread_attr_init(&attr);
    pthread_attr_getstacksize(&attr, &stacksize);
    newstacksize = 0x40000; /* 262144 */
    pthread_attr_setstacksize(&attr, newstacksize);
-   rc = pthread_create(&(p_tcpsrv->domsrv_tid), &attr, mg_domsrv_listener, (void *) NULL);
+   rc = pthread_create(&(p_tcpsrv->domsrv_tid), &attr, mgpw_domsrv_listener, (void *) NULL);
    if (rc) {
-      sprintf(error, "ERROR creating thread for mg_domsrv_listener (%d)", errno);
-      mg_log_event(p_log, error, "mg_tcpsrv_init: error", 0);
+      sprintf(error, "ERROR creating thread for mgpw_domsrv_listener (%d)", errno);
+      mgpw_log_event(p_log, error, "mgpw_tcpsrv_init: error", 0);
       return YDB_FAILURE;
    }
 
@@ -2154,7 +2452,7 @@ int mg_tcpsrv_init(int port, char *options, char *error)
 }
 
 
-int mg_tcpsrv_accept(char *key, char *error)
+int mgpw_tcpsrv_accept(char *key, char *error)
 {
    int rc, clilen, count, smax, len;
    fd_set socket_set;
@@ -2164,22 +2462,22 @@ int mg_tcpsrv_accept(char *key, char *error)
    count = -1;
    if (key[0]) {
 /*
-      mg_log_event(p_log, key, "mg_tcpsrv_accept: existing key", 0);
+      mgpw_log_event(p_log, key, "mgpw_tcpsrv_accept: existing key", 0);
 */
       count = (int) strtol(key, NULL, 10);
-      if (count >= DBX_MAX_CLIFD) {
+      if (count >= MGPW_MAX_CLIFD) {
          count = -1;
       }
    }
    if (count == -1) {
       count = p_tcpsrv->count;
       p_tcpsrv->count ++;
-      if (p_tcpsrv->count >= DBX_MAX_CLIFD) {
+      if (p_tcpsrv->count >= MGPW_MAX_CLIFD) {
          p_tcpsrv->count = 0;
       }
       sprintf(key, "%d|%d|||%s|", count, p_tcpsrv->port, p_tcpsrv->domsrv_name);
 /*
-      mg_log_event(p_log, key, "mg_tcpsrv_accept: new key", 0);
+      mgpw_log_event(p_log, key, "mgpw_tcpsrv_accept: new key", 0);
 */
    }
 
@@ -2198,7 +2496,7 @@ int mg_tcpsrv_accept(char *key, char *error)
 {
    char buffer[256];
    sprintf(buffer, "rc=%d; errno=%d", rc, errno);
-   mg_log_event(p_log, buffer, "mg_tcpsrv_accept: select", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_tcpsrv_accept: select", 0);
 }
 */
       if (rc == 0) {
@@ -2229,7 +2527,7 @@ int mg_tcpsrv_accept(char *key, char *error)
 {
    char buffer[256];
    sprintf(buffer, "rc=%d; port=%d count=%d; p_tcpsrv->new_sockfd[count]=%d; p_tcpsrv->srv_sockfd=%d; errno=%d", rc, p_tcpsrv->port, count, p_tcpsrv->new_sockfd[count], p_tcpsrv->srv_sockfd, errno);
-   mg_log_event(p_log, buffer, "mg_tcpsrv_accept", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_tcpsrv_accept", 0);
 }
 */
 
@@ -2237,7 +2535,7 @@ int mg_tcpsrv_accept(char *key, char *error)
 }
 
 
-int mg_tcpsrv_send(char *data, int len, int flush, char *error)
+int mgpw_tcpsrv_send(char *data, int len, int flush, char *error)
 {
    int rc;
 
@@ -2247,20 +2545,20 @@ int mg_tcpsrv_send(char *data, int len, int flush, char *error)
       strcpy(error, "<EOF>");
    }
    else if (rc < 0) {
-      sprintf(error, "mg_tcpsrv_send (%d)", errno);
+      sprintf(error, "mgpw_tcpsrv_send (%d)", errno);
    }
 /*
 {
    char buffer[256];
    sprintf(buffer, "rc=%d; p_tcpsrv->cli_sockfd=%d; errno=%d", rc, p_tcpsrv->cli_sockfd, errno);
-   mg_log_event(p_log, buffer, "mg_tcpsrv_send", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_tcpsrv_send", 0);
 }
 */
    return rc;
 }
 
 
-int mg_tcpsrv_recv(char *data, int dsize, int len, int timeout, char *error)
+int mgpw_tcpsrv_recv(char *data, int dsize, int len, int timeout, char *error)
 {
    int rc, eno, timed_out;
    unsigned int avail, got, get;
@@ -2271,7 +2569,7 @@ int mg_tcpsrv_recv(char *data, int dsize, int len, int timeout, char *error)
 {
    char buffer[256];
    sprintf(buffer, "START: dsize=%d; len=%d; timeout=%d; wbuffer_datasize=%d; wbuffer_offset=%d", dsize, len, timeout, p_tcpsrv->wbuffer_datasize, p_tcpsrv->wbuffer_offset);
-   mg_log_event(p_log, buffer, "mg_tcpsrv_recv", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_tcpsrv_recv", 0);
 }
 */
    timed_out = 0;
@@ -2294,7 +2592,7 @@ int mg_tcpsrv_recv(char *data, int dsize, int len, int timeout, char *error)
 {
    char buffer[256];
    sprintf(buffer, "FULL BUFFER READ: dsize=%d; len=%d; wbuffer_datasize=%d; wbuffer_offset=%d; got=%d; get=%d; avail=%d", dsize, len, p_tcpsrv->wbuffer_datasize, p_tcpsrv->wbuffer_offset, got, get, avail);
-   mg_log_event(p_log, buffer, "mg_tcpsrv_recv", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_tcpsrv_recv", 0);
 }
 */
 
@@ -2309,7 +2607,7 @@ int mg_tcpsrv_recv(char *data, int dsize, int len, int timeout, char *error)
 {
    char buffer[256];
    sprintf(buffer, "PART BUFFER READ: dsize=%d; len=%d; wbuffer_datasize=%d; wbuffer_offset=%d; got=%d; get=%d; avail=%d", dsize, len, p_tcpsrv->wbuffer_datasize, p_tcpsrv->wbuffer_offset, got, get, avail);
-   mg_log_event(p_log, buffer, "mg_tcpsrv_recv", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_tcpsrv_recv", 0);
 }
 */
          if (len == 0) {
@@ -2355,7 +2653,7 @@ int mg_tcpsrv_recv(char *data, int dsize, int len, int timeout, char *error)
 {
    char buffer[256];
    sprintf(buffer, "recv: rc=%d; eno=%d; errno=%d;", rc, eno, errno);
-   mg_log_buffer(p_log, p_tcpsrv->wbuffer, rc, buffer, 0);
+   mgpw_log_buffer(p_log, p_tcpsrv->wbuffer, rc, buffer, 0);
 }
 */
 
@@ -2371,35 +2669,35 @@ int mg_tcpsrv_recv(char *data, int dsize, int len, int timeout, char *error)
          strcpy(error, "<EOF>");
    }
    else if (rc < 0) {
-      sprintf(error, "mg_tcpsrv_recv (%d)", errno);
+      sprintf(error, "mgpw_tcpsrv_recv (%d)", errno);
    }
 /*
 {
    char buffer[512];
    sprintf(buffer, "rc=%d; p_tcpsrv->cli_sockfd=%d; errno=%d", rc, p_tcpsrv->cli_sockfd, errno);
-   mg_log_event(p_log, buffer, "mg_tcpsrv_recv a", 0);
-   mg_log_event(p_log, data, "mg_tcpsrv_recv b", 0);
+   mgpw_log_event(p_log, buffer, "mgpw_tcpsrv_recv a", 0);
+   mgpw_log_event(p_log, data, "mgpw_tcpsrv_recv b", 0);
 }
 */
    return rc;
 }
 
 
-int mg_tcpsrv_recv_message(char *data, int dsize, int *len, int *cmnd, int timeout, char *error)
+int mgpw_tcpsrv_recv_message(char *data, int dsize, int *len, int *cmnd, int timeout, char *error)
 {
    int rc;
 
-   rc = mg_tcpsrv_recv(data, dsize, 5, timeout, error);
+   rc = mgpw_tcpsrv_recv(data, dsize, 5, timeout, error);
    if (rc != 5) {
       rc = YDB_FAILURE;
       return rc;
    }
 
-   *len = (int) mg_get_size((unsigned char *) data) - 5;
+   *len = (int) mgpw_get_size((unsigned char *) data) - 5;
    *cmnd = (int) data[4];
 
    if (*len > 0) {
-      rc = mg_tcpsrv_recv(data, dsize, *len, timeout, error);
+      rc = mgpw_tcpsrv_recv(data, dsize, *len, timeout, error);
    }
 
 /* experiental code */
@@ -2414,7 +2712,7 @@ int mg_tcpsrv_recv_message(char *data, int dsize, int *len, int *cmnd, int timeo
 
       p = (data + 10);
       for (n = 0; n < 32; n ++) {
-         lenx = (int) mg_get_size((unsigned char *) p);
+         lenx = (int) mgpw_get_size((unsigned char *) p);
          p += 4;
          sort = (int) (((unsigned char) (*p)) / 20);
          type = (int) (((unsigned char) (*p)) % 20);
@@ -2437,7 +2735,7 @@ int mg_tcpsrv_recv_message(char *data, int dsize, int *len, int *cmnd, int timeo
          {
             char buffer[256];
             sprintf(buffer, "input cmnd=%d; n=%d; sort=%d, type=%d; lenx=%d;", *cmnd, n, sort, type, lenx);
-            mg_log_buffer(p_log, data, *len, buffer, 0);
+            mgpw_log_buffer(p_log, data, *len, buffer, 0);
          }
 */
       }
@@ -2448,7 +2746,7 @@ int mg_tcpsrv_recv_message(char *data, int dsize, int *len, int *cmnd, int timeo
 
       rc = p_ydb_so->p_ydb_get_s(&global, n - 1, &key[0], &datax);
 
-      mg_set_size((unsigned char *) p_tcpsrv->wbuffer, (unsigned long) datax.len_used);
+      mgpw_set_size((unsigned char *) p_tcpsrv->wbuffer, (unsigned long) datax.len_used);
       sort = 1;
       type = 1;
       p_tcpsrv->wbuffer[4] = (unsigned char) ((sort * 20) + type);
@@ -2456,10 +2754,10 @@ int mg_tcpsrv_recv_message(char *data, int dsize, int *len, int *cmnd, int timeo
       {
          char buffer[256];
          sprintf(buffer, "result: p_ydb_get_s=%d; len=%d; cmnd=%d", rc, datax.len_used, *cmnd);
-         mg_log_buffer(p_log, p_tcpsrv->wbuffer, datax.len_used + 5, buffer, 0);
+         mgpw_log_buffer(p_log, p_tcpsrv->wbuffer, datax.len_used + 5, buffer, 0);
       }
 */
-      mg_tcpsrv_send(p_tcpsrv->wbuffer, datax.len_used + 5, 1, error);
+      mgpw_tcpsrv_send(p_tcpsrv->wbuffer, datax.len_used + 5, 1, error);
       *cmnd = 0;
    }
 
@@ -2469,7 +2767,7 @@ int mg_tcpsrv_recv_message(char *data, int dsize, int *len, int *cmnd, int timeo
 }
 
 
-int mg_tcpsrv_close(char *key)
+int mgpw_tcpsrv_close(char *key)
 {
    int len;
 

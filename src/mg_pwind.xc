@@ -23,4 +23,12 @@ tcpread: ydb_status_t mg_tcpchild_recv(O:ydb_string_t *[32768], I:ydb_int_t, I:y
 tcpreadascii: ydb_status_t mg_tcpchild_recv_ascii(O:ydb_int_t *, I:ydb_int_t, O:ydb_string_t *[512])
 tcpreadmessage: ydb_status_t mg_tcpchild_recv_message(O:ydb_string_t *[32768], O:ydb_int_t *, O:ydb_int_t *, I:ydb_int_t, O:ydb_string_t *[512])
 tcpclose: ydb_status_t mg_tcpchild_close()
+error: ydb_status_t mg_error(O:ydb_string_t *[1024])
+dbopen: ydb_status_t mg_dbopen(I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *)
+dbclose: ydb_status_t mg_dbclose(I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *)
+dbget: ydb_status_t mg_dbget(O:ydb_string_t *[32768], I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *)
+dbset: ydb_status_t mg_dbset(I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *)
+dbkill: ydb_status_t mg_dbkill(I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *)
+dborder: ydb_status_t mg_dborder(O:ydb_string_t *[32768], I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *)
+dbprevious: ydb_status_t mg_dbprevious(O:ydb_string_t *[32768], I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *)
 

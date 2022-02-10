@@ -27,16 +27,17 @@
 
 #ifndef MG_PWIND_H
 #define MG_PWIND_H
-
+/*
 #define MAJORVERSION             1
 #define MINORVERSION             2
 #define BUILDNUMBER              2
+*/
 
-#define DBX_VERSION_MAJOR        "1"
-#define DBX_VERSION_MINOR        "2"
-#define DBX_VERSION_BUILD        "2"
+#define MGPW_VERSION_MAJOR       "1"
+#define MGPW_VERSION_MINOR       "2"
+#define MGPW_VERSION_BUILD       "2"
 
-#define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
+#define MGPW_VERSION             MGPW_VERSION_MAJOR "." MGPW_VERSION_MINOR "." MGPW_VERSION_BUILD
 
 #define WORK_BUFFER              32768
 
@@ -75,7 +76,7 @@
 #if defined(_WIN32)
 
 #include <stdlib.h>
-#include <windows.h>
+//#include <windows.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -122,8 +123,12 @@
 #include <openssl/x509.h>
 #include <openssl/err.h>
 
-/* YottaDB */
+#define MG_DBA_EMBEDDED          1
+#include "mg_dbasys.h"
+#include "mg_dba.h"
 
+/* YottaDB */
+/*
 #define YDB_DEL_TREE 1
 #define YDB_OK 0
 #define YDB_FAILURE -1
@@ -150,57 +155,57 @@ typedef struct {
    ydb_string_t   rtn_name;
    void		      *handle;
 } ci_name_descriptor;
-
+*/
 
 /* End of YottaDB */
 
-#define MG_EXT_NAME              "mg_pwind"
-#define DBX_ERROR_SIZE           512
+#define MGPW_EXT_NAME            "mg_pwind"
+#define MGPW_ERROR_SIZE          512
 
 #ifdef _WIN32
-#define MG_LOG_FILE              "c:/temp/" MG_EXT_NAME ".log"
+#define MGPW_LOG_FILE            "c:/temp/" MGPW_EXT_NAME ".log"
 #else
-#define MG_LOG_FILE              "/tmp/" MG_EXT_NAME ".log"
+#define MGPW_LOG_FILE            "/tmp/" MGPW_EXT_NAME ".log"
 #endif
 
 
 #if defined(__linux__) || defined(linux) || defined(LINUX)
-#define DBX_MEMCPY(a,b,c)        memmove(a,b,c)
+#define MGPW_MEMCPY(a,b,c)        memmove(a,b,c)
 #else
-#define DBX_MEMCPY(a,b,c)        memcpy(a,b,c)
+#define MGPW_MEMCPY(a,b,c)        memcpy(a,b,c)
 #endif
 
-typedef void * (* MG_MALLOC)     (unsigned long size);
-typedef void * (* MG_REALLOC)    (void *p, unsigned long size);
-typedef int    (* MG_FREE)       (void *p);
+typedef void * (* MGPW_MALLOC)   (unsigned long size);
+typedef void * (* MGPW_REALLOC)  (void *p, unsigned long size);
+typedef int    (* MGPW_FREE)     (void *p);
 
 
 #if defined(_WIN32)
-#define DBX_EXTFUN(a)            __declspec(dllexport) a __cdecl
+#define MGPW_EXTFUN(a)           __declspec(dllexport) a __cdecl
 #else
-#define DBX_EXTFUN(a)            a
+#define MGPW_EXTFUN(a)           a
 #endif /* #if defined(_WIN32) */
 
 
-typedef struct tagDBXLOG {
+typedef struct tagMGPWLOG {
    char log_file[128];
    char log_level[8];
    short log_errors;
-} DBXLOG, *PDBXLOG;
+} MGPWLOG, *PMGPWLOG;
 
 
 #if defined(_WIN32)
-typedef DWORD           DBXTHID;
-typedef HINSTANCE       DBXPLIB;
-typedef FARPROC         DBXPROC;
+typedef DWORD           MGPWTHID;
+typedef HINSTANCE       MGPWPLIB;
+typedef FARPROC         MGPWPROC;
 #else
-typedef pthread_t       DBXTHID;
-typedef void            *DBXPLIB;
-typedef void            *DBXPROC;
+typedef pthread_t       MGPWTHID;
+typedef void            *MGPWPLIB;
+typedef void            *MGPWPROC;
 #endif
 
 
-typedef struct tagDBXMUTEX {
+typedef struct tagMGPWMUTEX {
    unsigned char     created;
    int               stack;
 #if defined(_WIN32)
@@ -208,15 +213,15 @@ typedef struct tagDBXMUTEX {
 #else
    pthread_mutex_t   h_mutex;
 #endif /* #if defined(_WIN32) */
-   DBXTHID           thid;
-} DBXMUTEX, *PDBXMUTEX;
+   MGPWTHID           thid;
+} MGPWMUTEX, *PMGPWMUTEX;
 
 
-#define DBX_CRYPT_LOAD(a) \
+#define MGPW_CRYPT_LOAD(a) \
    a->length = 0; \
    a->address[0] = '\0'; \
    if (!p_crypt_so->loaded) { \
-      if (crypt_load_library(p_crypt_so) != YDB_OK) { \
+      if (mgpw_crypt_load_library(p_crypt_so) != YDB_OK) { \
          strcpy(a->address, error_message); \
          a->length = (unsigned long) strlen(a->address); \
          return YDB_FAILURE; \
@@ -225,18 +230,18 @@ typedef struct tagDBXMUTEX {
 
 
 #if defined(_WIN32)
-#define DBX_CRYPT_DLL            "libeay32.dll"
+#define MGPW_CRYPT_DLL            "libeay32.dll"
 #else
-#define DBX_CRYPT_SO             "libcrypto.so"
-#define DBX_CRYPT_SL             "libcrypto.sl"
-#define DBX_CRYPT_DYLIB          "libcrypto.dylib"
+#define MGPW_CRYPT_SO             "libcrypto.so"
+#define MGPW_CRYPT_SL             "libcrypto.sl"
+#define MGPW_CRYPT_DYLIB          "libcrypto.dylib"
 #endif
 
-typedef struct tagDBXCRYPTSO {
+typedef struct tagMGPWCRYPTSO {
    short             loaded;
    char              libnam[256];
    char              dbname[32];
-   DBXPLIB           p_library;
+   MGPWPLIB           p_library;
 
    const char *      (* p_OpenSSL_version)               (int type);
    unsigned char *   (* p_HMAC)                          (const EVP_MD *evp_md, const void *key, int key_len, const unsigned char *d, int n, unsigned char *md, unsigned int *md_len);
@@ -249,25 +254,27 @@ typedef struct tagDBXCRYPTSO {
    unsigned char *   (* p_SHA512)                        (const unsigned char *d, unsigned long n, unsigned char *md);
    unsigned char *   (* p_MD5)                           (const unsigned char *d, unsigned long n, unsigned char *md);
 
-} DBXCRYPTSO, *PDBXCRYPTSO;
+} MGPWCRYPTSO, *PMGPWCRYPTSO;
 
-
+/*
 #if defined(_WIN32)
-#define DBX_YDB_DLL              "yottadb.dll"
+#define MGPW_YDB_DLL              "yottadb.dll"
 #else
-#define DBX_IRIS_SO              "libirisdb.so"
-#define DBX_IRIS_DYLIB           "libirisdb.dylib"
-#define DBX_YDB_SO               "libyottadb.so"
-#define DBX_YDB_DYLIB            "libyottadb.dylib"
+#define MGPW_IRIS_SO              "libirisdb.so"
+#define MGPW_IRIS_DYLIB           "libirisdb.dylib"
+#define MGPW_YDB_SO               "libyottadb.so"
+#define MGPW_YDB_DYLIB            "libyottadb.dylib"
 #endif
+*/
 
-typedef struct tagDBXYDBSO {
+/*
+typedef struct tagMGPWYDBSO {
    short             loaded;
    char              libdir[256];
    char              libnam[256];
    char              funprfx[8];
    char              dbname[32];
-   DBXPLIB           p_library;
+   MGPWPLIB           p_library;
 
    int               (* p_ydb_init)                      (void);
    int               (* p_ydb_exit)                      (void);
@@ -289,16 +296,16 @@ typedef struct tagDBXYDBSO {
    void              (* p_ydb_zstatus)                   (ydb_char_t* msg_buffer, ydb_long_t buf_len);
    int               (* p_ydb_tp_s)                      (ydb_tpfnptr_t tpfn, void *tpfnparm, const char *transid, int namecount, ydb_buffer_t *varnames);
 
-} DBXYDBSO, *PDBXYDBSO;
+} MGPWYDBSO, *PMGPWYDBSO;
+*/
 
-
-#define DBX_MAX_CLIFD            32
-typedef struct tagDBXTCPSRV {
+#define MGPW_MAX_CLIFD            32
+typedef struct tagMGPWTCPSRV {
    int count;
    int port;
    int srv_sockfd;
    int cli_sockfd;
-   int new_sockfd[DBX_MAX_CLIFD];
+   int new_sockfd[MGPW_MAX_CLIFD];
    struct sockaddr_in srv_addr;
    struct sockaddr_in cli_addr;
 
@@ -318,7 +325,7 @@ typedef struct tagDBXTCPSRV {
    unsigned int wbuffer_datasize;
    unsigned int wbuffer_offset;
    unsigned char wbuffer[WORK_BUFFER];
-} DBXTCPSRV, *PDBXTCPSRV;
+} MGPWTCPSRV, *PMGPWTCPSRV;
 
 
 /* CRC32 */
@@ -373,97 +380,111 @@ static unsigned long crc_32_tab[] = { /* CRC polynomial 0xedb88320 */
 
 
 #if defined(_WIN32)
-extern CRITICAL_SECTION  dbx_global_mutex;
+extern CRITICAL_SECTION mgpw_global_mutex;
 #else
-extern pthread_mutex_t   dbx_global_mutex;
+extern pthread_mutex_t  mgpw_global_mutex;
 #endif
 
-extern MG_MALLOC        dbx_ext_malloc;
-extern MG_REALLOC       dbx_ext_realloc;
-extern MG_FREE          dbx_ext_free;
+extern MGPW_MALLOC      mgpw_ext_malloc;
+extern MGPW_REALLOC     mgpw_ext_realloc;
+extern MGPW_FREE        mgpw_ext_free;
 
-DBX_EXTFUN(int)         mg_version                    (int count, ydb_string_t *out);
-DBX_EXTFUN(int)         mg_crypt_library              (int count, ydb_string_t *in);
-DBX_EXTFUN(int)         mg_ssl_version                (int count, ydb_string_t *out, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_sha1                       (int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_sha256                     (int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_sha512                     (int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_md5                        (int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_error                      (int count, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_dbopen                     (int count, ydb_string_t *dbtype, ydb_string_t *path, ydb_string_t *host, ydb_string_t *port, ydb_string_t *username, ydb_string_t *password, ydb_string_t *nspace, ydb_string_t *parameters);
+MGPW_EXTFUN(int)        mg_dbclose                    (int count);
+MGPW_EXTFUN(int)        mg_dbget                      (int count, ydb_string_t *out, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbset                      (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbkill                     (int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dborder                    (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbprevious                 (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 
-DBX_EXTFUN(int)         mg_hmac_sha1                  (int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_hmac_sha256                (int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_hmac_sha512                (int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_hmac_md5                   (int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_version                    (int count, ydb_string_t *out);
+MGPW_EXTFUN(int)        mg_crypt_library              (int count, ydb_string_t *in);
+MGPW_EXTFUN(int)        mg_ssl_version                (int count, ydb_string_t *out, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_sha1                       (int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_sha256                     (int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_sha512                     (int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_md5                        (int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
 
-DBX_EXTFUN(int)         mg_encode_b64                 (int count, ydb_string_t *in, ydb_string_t *out);
-DBX_EXTFUN(int)         mg_decode_b64                 (int count, ydb_string_t *in, ydb_string_t *out);
-DBX_EXTFUN(int)         mg_crc32                      (int count, ydb_string_t *in, ydb_uint_t *out);
+MGPW_EXTFUN(int)        mg_hmac_sha1                  (int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_hmac_sha256                (int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_hmac_sha512                (int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_hmac_md5                   (int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
+
+MGPW_EXTFUN(int)        mg_encode_b64                 (int count, ydb_string_t *in, ydb_string_t *out);
+MGPW_EXTFUN(int)        mg_decode_b64                 (int count, ydb_string_t *in, ydb_string_t *out);
+MGPW_EXTFUN(int)        mg_crc32                      (int count, ydb_string_t *in, ydb_uint_t *out);
 
 #if !defined(_WIN32)
-DBX_EXTFUN(int)         mg_tcp_options                (int count, ydb_string_t *options, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_tcpserver_init             (int count, ydb_int_t port, ydb_string_t *options, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_tcpserver_accept           (int count, ydb_string_t *key, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_tcpserver_close            (int count, ydb_string_t *key);
-DBX_EXTFUN(int)         mg_tcpchild_init              (int count, ydb_string_t *key, ydb_string_t *options, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_tcpchild_send              (int count, ydb_string_t *data, ydb_int_t flush, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_tcpchild_recv              (int count, ydb_string_t *data, ydb_int_t len, ydb_int_t timeout, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_tcpchild_recv_ascii        (int count, ydb_int_t *data, ydb_int_t timeout, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_tcpchild_recv_message      (int count, ydb_string_t *data, ydb_int_t *len, ydb_int_t *cmnd, ydb_int_t timeout, ydb_string_t *error);
-DBX_EXTFUN(int)         mg_tcpchild_close             (int count);
+MGPW_EXTFUN(int)        mg_tcp_options                (int count, ydb_string_t *options, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_tcpserver_init             (int count, ydb_int_t port, ydb_string_t *options, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_tcpserver_accept           (int count, ydb_string_t *key, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_tcpserver_close            (int count, ydb_string_t *key);
+MGPW_EXTFUN(int)        mg_tcpchild_init              (int count, ydb_string_t *key, ydb_string_t *options, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_tcpchild_send              (int count, ydb_string_t *data, ydb_int_t flush, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_tcpchild_recv              (int count, ydb_string_t *data, ydb_int_t len, ydb_int_t timeout, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_tcpchild_recv_ascii        (int count, ydb_int_t *data, ydb_int_t timeout, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_tcpchild_recv_message      (int count, ydb_string_t *data, ydb_int_t *len, ydb_int_t *cmnd, ydb_int_t timeout, ydb_string_t *error);
+MGPW_EXTFUN(int)        mg_tcpchild_close             (int count);
 #endif
 
-int                     crypt_load_library            (DBXCRYPTSO *p_crypt_so);
-int                     ydb_load_library              (DBXYDBSO *p_ydb_so);
+int                     mgpw_crypt_load_library       (MGPWCRYPTSO *p_crypt_so);
+/*
+int                     ydb_load_library              (MGPWYDBSO *p_ydb_so);
+*/
 
-int                     mg_set_size                   (unsigned char *str, unsigned long data_len);
-unsigned long           mg_get_size                   (unsigned char *str);
+int                     mgpw_pack_args                (DBXSTR *pblock, int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+int                     mgpw_unpack_result            (DBXSTR *pblock, ydb_string_t *out);
 
-void *                  mg_realloc                    (void *p, int curr_size, int new_size, short id);
-void *                  mg_malloc                     (int size, short id);
-int                     mg_free                       (void *p, short id);
+int                     mgpw_set_size                 (unsigned char *str, unsigned long data_len);
+unsigned long           mgpw_get_size                 (unsigned char *str);
 
-int                     mg_lcase                      (char *string);
-int                     mg_log_init                   (DBXLOG *p_log);
-int                     mg_log_event                  (DBXLOG *p_log, char *message, char *title, int level);
-int                     mg_log_buffer                 (DBXLOG *p_log, char *buffer, int buffer_len, char *title, int level);
-DBXPLIB                 mg_dso_load                   (char *library);
-DBXPROC                 mg_dso_sym                    (DBXPLIB p_library, char *symbol);
-int                     mg_dso_unload                 (DBXPLIB p_library);
-DBXTHID                 mg_current_thread_id          (void);
-unsigned long           mg_current_process_id         (void);
+void *                  mgpw_realloc                  (void *p, int curr_size, int new_size, short id);
+void *                  mgpw_malloc                   (int size, short id);
+int                     mgpw_free                     (void *p, short id);
 
-int                     mg_mutex_create               (DBXMUTEX *p_mutex);
-int                     mg_mutex_lock                 (DBXMUTEX *p_mutex, int timeout);
-int                     mg_mutex_unlock               (DBXMUTEX *p_mutex);
-int                     mg_mutex_destroy              (DBXMUTEX *p_mutex);
-int                     mg_init_critical_section      (void *p_crit);
-int                     mg_delete_critical_section    (void *p_crit);
-int                     mg_enter_critical_section     (void *p_crit);
-int                     mg_leave_critical_section     (void *p_crit);
-int                     mg_sleep                      (unsigned long msecs);
+int                     mgpw_lcase                    (char *string);
+int                     mgpw_log_init                 (MGPWLOG *p_log);
+int                     mgpw_log_event                (MGPWLOG *p_log, char *message, char *title, int level);
+int                     mgpw_log_buffer               (MGPWLOG *p_log, char *buffer, int buffer_len, char *title, int level);
+MGPWPLIB                mgpw_dso_load                 (char *library);
+MGPWPROC                mgpw_dso_sym                  (MGPWPLIB p_library, char *symbol);
+int                     mgpw_dso_unload               (MGPWPLIB p_library);
+MGPWTHID                mgpw_current_thread_id        (void);
+unsigned long           mgpw_current_process_id       (void);
 
-char                    mg_b64_ntc                    (unsigned char n);
-unsigned char           mg_b64_ctn                    (char c);
-int                     mg_b64_encode                 (char *from, int length, char *to, int quads);
-int                     mg_b64_decode                 (char *from, int length, char *to);
-int                     mg_b64_enc_buffer_size        (int l, int q);
-int                     mg_b64_strip_enc_buffer       (char *buf, int length);
-int                     mg_hex_encode                 (char *from, int length, char *to);
-unsigned long           mg_crc32_checksum             (char *buffer, size_t len);
+int                     mgpw_mutex_create             (MGPWMUTEX *p_mutex);
+int                     mgpw_mutex_lock               (MGPWMUTEX *p_mutex, int timeout);
+int                     mgpw_mutex_unlock             (MGPWMUTEX *p_mutex);
+int                     mgpw_mutex_destroy            (MGPWMUTEX *p_mutex);
+int                     mgpw_init_critical_section    (void *p_crit);
+int                     mgpw_delete_critical_section  (void *p_crit);
+int                     mgpw_enter_critical_section   (void *p_crit);
+int                     mgpw_leave_critical_section   (void *p_crit);
+int                     mgpw_sleep                    (unsigned long msecs);
+
+char                    mgpw_b64_ntc                  (unsigned char n);
+unsigned char           mgpw_b64_ctn                  (char c);
+int                     mgpw_b64_encode               (char *from, int length, char *to, int quads);
+int                     mgpw_b64_decode               (char *from, int length, char *to);
+int                     mgpw_b64_enc_buffer_size      (int l, int q);
+int                     mgpw_b64_strip_enc_buffer     (char *buf, int length);
+int                     mgpw_hex_encode               (char *from, int length, char *to);
+unsigned long           mgpw_crc32_checksum           (char *buffer, size_t len);
 
 #if !defined(_WIN32)
-void *                  mg_stdin_listener             (void *pargs);
-void *                  mg_stdout_listener            (void *pargs);
-void *                  mg_domsrv_listener            (void *pargs);
-int                     mg_domsrv_init                ();
-int                     mg_domsrv_sendfd              (int sockfd);
-int                     mg_domsrv_recvfd              (char *key, char *options, char *error);
-int                     mg_tcpsrv_init                (int port, char *options, char *error);
-int                     mg_tcpsrv_accept              (char *key, char *error);
-int                     mg_tcpsrv_send                (char *data, int len, int flush, char *error);
-int                     mg_tcpsrv_recv                (char *data, int dsize, int len, int timeout, char *error);
-int                     mg_tcpsrv_recv_message        (char *data, int dsize, int *len, int *cmnd, int timeout, char *error);
-int                     mg_tcpsrv_close               (char *key);
+void *                  mgpw_stdin_listener           (void *pargs);
+void *                  mgpw_stdout_listener          (void *pargs);
+void *                  mgpw_domsrv_listener          (void *pargs);
+int                     mgpw_domsrv_init              ();
+int                     mgpw_domsrv_sendfd            (int sockfd);
+int                     mgpw_domsrv_recvfd            (char *key, char *options, char *error);
+int                     mgpw_tcpsrv_init              (int port, char *options, char *error);
+int                     mgpw_tcpsrv_accept            (char *key, char *error);
+int                     mgpw_tcpsrv_send              (char *data, int len, int flush, char *error);
+int                     mgpw_tcpsrv_recv              (char *data, int dsize, int len, int timeout, char *error);
+int                     mgpw_tcpsrv_recv_message      (char *data, int dsize, int *len, int *cmnd, int timeout, char *error);
+int                     mgpw_tcpsrv_close             (char *key);
 #endif
 
 #endif
