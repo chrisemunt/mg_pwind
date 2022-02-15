@@ -296,11 +296,11 @@ This is equivalent to:
 
 ### Get next global key record
 
-       set status=$&pwind.dbnext(.<nkey>, <global>, <key ...>)
+       set status=$&pwind.dborder(.<nkey>, <global>, <key ...>)
 
 Example:
 
-       set status=$&pwind.dbnext(.nkey, "^MyGlobal", "")
+       set status=$&pwind.dborder(.nkey, "^MyGlobal", "")
 
 This is equivalent to:
 
