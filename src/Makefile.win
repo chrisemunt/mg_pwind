@@ -1,0 +1,48 @@
+# Microsoft Windows makefile for mg_pwind module (mg_pwind.dll)
+#
+# Build:
+# nmake -f Makefile.win
+#
+# Cleanup:
+# nmake -f Makefile.win clean
+#
+# Install:
+# nmake -f Makefile.win install
+
+
+# Microsoft C Compiler
+CC=cl.exe
+
+# Microsoft linker
+LINK=link.exe
+
+# Build mg_pwind module
+all : app
+
+# Link the object file and dependent libraries into a binary
+app : mg_dba.obj mg_pwind.obj
+   $(LINK) /OUT:mg_pwind.dll mg_dba.obj mg_pwind.obj /MANIFEST /NXCOMPAT /PDB:"mg_pwind.pdb" /DYNAMICBASE \
+           "kernel32.lib" "user32.lib" \
+           /IMPLIB:"mg_pwind.lib" /DLL /MACHINE:X64 /INCREMENTAL:NO /SUBSYSTEM:WINDOWS \
+           /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /ERRORREPORT:PROMPT /NOLOGO \
+           /TLBID:1
+
+# Compile the source file into object file
+mg_pwind.obj : mg_pwind.c
+   $(CC) /Fomg_pwind.obj /GS /W3 /Gy /Zc:wchar_t /Zi /Gm- /O2 /Ob1 /fp:precise \
+         /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_VC80_UPGRADE=0x0710" /D "_WINDLL" /D "MG_PWIND_DSO" /errorReport:prompt \
+         /GF /WX- /Zc:forScope /Gd /MD /FC /EHsc /c mg_pwind.c
+
+mg_dba.obj : mg_dba.c
+   $(CC) /Fomg_dba.obj /GS /W3 /Gy /Zc:wchar_t /Zi /Gm- /O2 /Ob1 /fp:precise \
+         /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_VC80_UPGRADE=0x0710" /D "_WINDLL" /D "MG_PWIND_DSO" /errorReport:prompt \
+         /GF /WX- /Zc:forScope /Gd /MD /FC /EHsc /c mg_dba.c
+
+# Install mg_pwind module
+install :
+   rem copy mg_pwind.dll c:\windows\system32\
+
+# Clean target
+clean :
+   del mg_pwind.dll mg_pwind.dll.manifest mg_pwind.obj mg_pwind.pdb mg_pwind.lib mg_pwind.exp mg_dba.obj vc*.pdb
+

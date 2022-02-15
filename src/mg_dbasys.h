@@ -5,7 +5,7 @@
    |              and YottaDB API                                             |
    | Author:      Chris Munt cmunt@mgateway.com                               |
    |                         chris.e.munt@gmail.com                           |
-   | Copyright (c) 2017-2021 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2017-2022 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -31,12 +31,12 @@
 
 #define MAJORVERSION             1
 #define MINORVERSION             3
-#define MAINTVERSION             11
-#define BUILDNUMBER              11
+#define MAINTVERSION             12
+#define BUILDNUMBER              12
 
 #define DBX_VERSION_MAJOR        "1"
 #define DBX_VERSION_MINOR        "3"
-#define DBX_VERSION_BUILD        "11"
+#define DBX_VERSION_BUILD        "12"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 #define DBX_COMPANYNAME          "M/Gateway Developments Ltd\0"

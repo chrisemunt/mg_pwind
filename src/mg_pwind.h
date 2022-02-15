@@ -4,7 +4,7 @@
    | Description: Access to DSO functions from YottaDB                        |
    | Author:      Chris Munt cmunt@mgateway.com                               |
    |                         chris.e.munt@gmail.com                           |
-   | Copyright (c) 2020-2021 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2020-2022 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -27,15 +27,10 @@
 
 #ifndef MG_PWIND_H
 #define MG_PWIND_H
-/*
-#define MAJORVERSION             1
-#define MINORVERSION             2
-#define BUILDNUMBER              2
-*/
 
 #define MGPW_VERSION_MAJOR       "1"
-#define MGPW_VERSION_MINOR       "2"
-#define MGPW_VERSION_BUILD       "2"
+#define MGPW_VERSION_MINOR       "3"
+#define MGPW_VERSION_BUILD       "3"
 
 #define MGPW_VERSION             MGPW_VERSION_MAJOR "." MGPW_VERSION_MINOR "." MGPW_VERSION_BUILD
 
@@ -76,7 +71,6 @@
 #if defined(_WIN32)
 
 #include <stdlib.h>
-//#include <windows.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -127,37 +121,6 @@
 #include "mg_dbasys.h"
 #include "mg_dba.h"
 
-/* YottaDB */
-/*
-#define YDB_DEL_TREE 1
-#define YDB_OK 0
-#define YDB_FAILURE -1
-
-typedef int             ydb_int_t;
-typedef unsigned int    ydb_uint_t;
-typedef long            ydb_long_t;
-typedef unsigned long   ydb_ulong_t;
-typedef char            ydb_char_t;
-typedef int             (*ydb_tpfnptr_t) (void *tpfnparm);  
-
-typedef struct {
-   unsigned int   len_alloc;
-   unsigned int   len_used;
-   char		      *buf_addr;
-} ydb_buffer_t;
-
-typedef struct {
-   unsigned long  length;
-   char		      *address;
-} ydb_string_t;
-
-typedef struct {
-   ydb_string_t   rtn_name;
-   void		      *handle;
-} ci_name_descriptor;
-*/
-
-/* End of YottaDB */
 
 #define MGPW_EXT_NAME            "mg_pwind"
 #define MGPW_ERROR_SIZE          512
@@ -217,17 +180,36 @@ typedef struct tagMGPWMUTEX {
 } MGPWMUTEX, *PMGPWMUTEX;
 
 
-#define MGPW_CRYPT_LOAD(a) \
-   a->length = 0; \
-   a->address[0] = '\0'; \
+#define MGPW_ARG_COUNT(a,b) \
+   error_message[0] = '\0'; \
+   error_message_len = 0; \
+   if (a < b) { \
+      strcpy(error_message, "Insufficient arguments supplied to PWIND function"); \
+      error_message_len = (int) strlen(error_message); \
+      return YDB_FAILURE; \
+   } \
+
+#define MGPW_CRYPT_LOAD(a,b) \
+   if (b) { \
+      a->length = 0; \
+      a->address[0] = '\0'; \
+   } \
    if (!p_crypt_so->loaded) { \
       if (mgpw_crypt_load_library(p_crypt_so) != YDB_OK) { \
-         strcpy(a->address, error_message); \
-         a->length = (unsigned long) strlen(a->address); \
+         if (b) { \
+            strcpy(a->address, error_message); \
+            a->length = (unsigned long) strlen(a->address); \
+         } \
          return YDB_FAILURE; \
       } \
    } \
 
+#define MGPW_DB_CONNECTED(a,b) \
+   if (!a.buf_addr || !b.address) { \
+      strcpy(error_message, "No connection to database"); \
+      error_message_len = (int) strlen(error_message); \
+      return YDB_FAILURE; \
+   } \
 
 #if defined(_WIN32)
 #define MGPW_CRYPT_DLL            "libeay32.dll"
@@ -256,48 +238,6 @@ typedef struct tagMGPWCRYPTSO {
 
 } MGPWCRYPTSO, *PMGPWCRYPTSO;
 
-/*
-#if defined(_WIN32)
-#define MGPW_YDB_DLL              "yottadb.dll"
-#else
-#define MGPW_IRIS_SO              "libirisdb.so"
-#define MGPW_IRIS_DYLIB           "libirisdb.dylib"
-#define MGPW_YDB_SO               "libyottadb.so"
-#define MGPW_YDB_DYLIB            "libyottadb.dylib"
-#endif
-*/
-
-/*
-typedef struct tagMGPWYDBSO {
-   short             loaded;
-   char              libdir[256];
-   char              libnam[256];
-   char              funprfx[8];
-   char              dbname[32];
-   MGPWPLIB           p_library;
-
-   int               (* p_ydb_init)                      (void);
-   int               (* p_ydb_exit)                      (void);
-   int               (* p_ydb_malloc)                    (size_t size);
-   int               (* p_ydb_free)                      (void *ptr);
-   int               (* p_ydb_data_s)                    (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, unsigned int *ret_value);
-   int               (* p_ydb_delete_s)                  (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, int deltype);
-   int               (* p_ydb_set_s)                     (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *value);
-   int               (* p_ydb_get_s)                     (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *ret_value);
-   int               (* p_ydb_subscript_next_s)          (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *ret_value);
-   int               (* p_ydb_subscript_previous_s)      (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *ret_value);
-   int               (* p_ydb_node_next_s)               (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, int *ret_subs_used, ydb_buffer_t *ret_subsarray);
-   int               (* p_ydb_node_previous_s)           (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, int *ret_subs_used, ydb_buffer_t *ret_subsarray);
-   int               (* p_ydb_incr_s)                    (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray, ydb_buffer_t *increment, ydb_buffer_t *ret_value);
-   int               (* p_ydb_ci)                        (const char *c_rtn_name, ...);
-   int               (* p_ydb_cip)                       (ci_name_descriptor *ci_info, ...);
-   int               (* p_ydb_lock_incr_s)               (unsigned long long timeout_nsec, ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
-   int               (* p_ydb_lock_decr_s)               (ydb_buffer_t *varname, int subs_used, ydb_buffer_t *subsarray);
-   void              (* p_ydb_zstatus)                   (ydb_char_t* msg_buffer, ydb_long_t buf_len);
-   int               (* p_ydb_tp_s)                      (ydb_tpfnptr_t tpfn, void *tpfnparm, const char *transid, int namecount, ydb_buffer_t *varnames);
-
-} MGPWYDBSO, *PMGPWYDBSO;
-*/
 
 #define MGPW_MAX_CLIFD            32
 typedef struct tagMGPWTCPSRV {
@@ -389,16 +329,8 @@ extern MGPW_MALLOC      mgpw_ext_malloc;
 extern MGPW_REALLOC     mgpw_ext_realloc;
 extern MGPW_FREE        mgpw_ext_free;
 
-MGPW_EXTFUN(int)        mg_error                      (int count, ydb_string_t *error);
-MGPW_EXTFUN(int)        mg_dbopen                     (int count, ydb_string_t *dbtype, ydb_string_t *path, ydb_string_t *host, ydb_string_t *port, ydb_string_t *username, ydb_string_t *password, ydb_string_t *nspace, ydb_string_t *parameters);
-MGPW_EXTFUN(int)        mg_dbclose                    (int count);
-MGPW_EXTFUN(int)        mg_dbget                      (int count, ydb_string_t *out, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
-MGPW_EXTFUN(int)        mg_dbset                      (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
-MGPW_EXTFUN(int)        mg_dbkill                     (int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
-MGPW_EXTFUN(int)        mg_dborder                    (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
-MGPW_EXTFUN(int)        mg_dbprevious                 (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
-
 MGPW_EXTFUN(int)        mg_version                    (int count, ydb_string_t *out);
+MGPW_EXTFUN(int)        mg_error                      (int count, ydb_string_t *error);
 MGPW_EXTFUN(int)        mg_crypt_library              (int count, ydb_string_t *in);
 MGPW_EXTFUN(int)        mg_ssl_version                (int count, ydb_string_t *out, ydb_string_t *error);
 MGPW_EXTFUN(int)        mg_sha1                       (int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error);
@@ -415,6 +347,15 @@ MGPW_EXTFUN(int)        mg_encode_b64                 (int count, ydb_string_t *
 MGPW_EXTFUN(int)        mg_decode_b64                 (int count, ydb_string_t *in, ydb_string_t *out);
 MGPW_EXTFUN(int)        mg_crc32                      (int count, ydb_string_t *in, ydb_uint_t *out);
 
+MGPW_EXTFUN(int)        mg_dbopen                     (int count, ydb_string_t *dbtype, ydb_string_t *path, ydb_string_t *host, ydb_string_t *port, ydb_string_t *username, ydb_string_t *password, ydb_string_t *nspace, ydb_string_t *parameters);
+MGPW_EXTFUN(int)        mg_dbclose                    (int count);
+MGPW_EXTFUN(int)        mg_dbget                      (int count, ydb_string_t *out, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbset                      (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbkill                     (int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dborder                    (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbprevious                 (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbfunction                 (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+
 #if !defined(_WIN32)
 MGPW_EXTFUN(int)        mg_tcp_options                (int count, ydb_string_t *options, ydb_string_t *error);
 MGPW_EXTFUN(int)        mg_tcpserver_init             (int count, ydb_int_t port, ydb_string_t *options, ydb_string_t *error);
@@ -429,9 +370,6 @@ MGPW_EXTFUN(int)        mg_tcpchild_close             (int count);
 #endif
 
 int                     mgpw_crypt_load_library       (MGPWCRYPTSO *p_crypt_so);
-/*
-int                     ydb_load_library              (MGPWYDBSO *p_ydb_so);
-*/
 
 int                     mgpw_pack_args                (DBXSTR *pblock, int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 int                     mgpw_unpack_result            (DBXSTR *pblock, ydb_string_t *out);

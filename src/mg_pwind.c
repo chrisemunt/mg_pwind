@@ -32,54 +32,48 @@ Version 1.0.1 5 March 2021:
    First release.
 
 Version 1.2.2 23 March 2021:
-   Introduce experimemtal network I/O layer. 
+   Introduce experimental network I/O layer.
+
+Version 1.3.3 15 February 2022:
+   Introduce experimental access to InterSystems databases.
 
 */
-
 
 #include "mg_pwind.h"
-/*
-#define MG_DBA_EMBEDDED          1
-#include "mg_dbasys.h"
-#include "mg_dba.h"
-*/
 
 #if !defined(_WIN32)
 extern int errno;
 #endif
 
-static MGPWCRYPTSO crypt_so      = {0, {0}, {0}, NULL, NULL};
-static MGPWCRYPTSO *p_crypt_so   = &crypt_so;
-/*
-static MGPWYDBSO ydb_so          = {0, {0}, {0}, {0}, {0}, NULL, NULL};
-static MGPWYDBSO *p_ydb_so       = &ydb_so;
-*/
-static MGPWTCPSRV  tcpsrv        = {0, 0};
-static MGPWTCPSRV  *p_tcpsrv     = &tcpsrv;
+static MGPWCRYPTSO   crypt_so             = {0, {0}, {0}, NULL, NULL};
+static MGPWCRYPTSO   *p_crypt_so          = &crypt_so;
 
-static MGPWLOG     pwindlog      = {"/tmp/mg_pwind.log", {0}, 0};
-static MGPWLOG     *p_log        = &pwindlog;
+static MGPWTCPSRV    tcpsrv               = {0, 0};
+static MGPWTCPSRV    *p_tcpsrv            = &tcpsrv;
 
-static char error_message[512]   = {0};
-static int  error_message_len    = 0;
-static int  error_code = 0;
-static DBXSTR gblock = {0, 0, NULL};
-static ydb_string_t gresult = {0, NULL};
+static MGPWLOG        pwindlog            = {"/tmp/mg_pwind.log", {0}, 0};
+static MGPWLOG       *p_log               = &pwindlog;
 
-MGPW_MALLOC            mgpw_ext_malloc = NULL;
-MGPW_REALLOC           mgpw_ext_realloc = NULL;
-MGPW_FREE              mgpw_ext_free = NULL;
+static char          error_message[512]   = {0};
+static int           error_message_len    = 0;
+static int           error_code           = 0;
+static DBXSTR        gblock               = {0, 0, NULL};
+static ydb_string_t  gresult              = {0, NULL};
+static int           isc_net_connection   = 0;
+
+MGPW_MALLOC          mgpw_ext_malloc      = NULL;
+MGPW_REALLOC         mgpw_ext_realloc     = NULL;
+MGPW_FREE            mgpw_ext_free        = NULL;
 
 #if defined(_WIN32)
-CRITICAL_SECTION  mgpw_global_mutex;
+CRITICAL_SECTION     mgpw_global_mutex;
 #else
-pthread_mutex_t   mgpw_global_mutex  = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t   mgpw_cond_mutex    = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t    mgpw_cond          = PTHREAD_COND_INITIALIZER;
-static int        mgpw_cond_flag     = 0;
+pthread_mutex_t      mgpw_global_mutex    = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t      mgpw_cond_mutex      = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t       mgpw_cond            = PTHREAD_COND_INITIALIZER;
+static int           mgpw_cond_flag       = 0;
 #endif
 
-int cmtxxx = 1;
 
 #if defined(_WIN32)
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
@@ -102,8 +96,26 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
 #endif /* #if defined(_WIN32) */
 
 
+MGPW_EXTFUN(int) mg_version(int count, ydb_string_t *out)
+{
+   MGPW_ARG_COUNT(count, 1);
+
+   sprintf((char *) out->address, "mg_pwind:%s", MGPW_VERSION);
+   out->length = (int) strlen(out->address);
+
+   return YDB_OK;
+}
+
+
 MGPW_EXTFUN(int) mg_error(int count, ydb_string_t *error)
 {
+   if (count < 1) {
+      return YDB_OK;
+   }
+
+   error->address[0] = '\0';
+   error->length = 0;
+
    if (error_message_len == 0) {
       error_message_len = (int) strlen(error_message);
    }
@@ -113,6 +125,333 @@ MGPW_EXTFUN(int) mg_error(int count, ydb_string_t *error)
 }
 
 
+MGPW_EXTFUN(int) mg_crypt_library(int count, ydb_string_t *in)
+{
+   MGPW_ARG_COUNT(count, 1);
+
+   strcpy(p_crypt_so->libnam, in->address);
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_ssl_version(int count, ydb_string_t *out, ydb_string_t *error)
+{
+   MGPW_ARG_COUNT(count, 1);
+   out->address[0] = '\0';
+   out->length = 0;
+   MGPW_CRYPT_LOAD(error, (count == 2));
+
+   strcpy((char *) out->address, p_crypt_so->p_OpenSSL_version(0));
+   out->length = (int) strlen(out->address);
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_sha1(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+{
+   int mac_len, len;
+   char mac[1024];
+
+   MGPW_ARG_COUNT(count, 3);
+   out->address[0] = '\0';
+   out->length = 0;
+   MGPW_CRYPT_LOAD(error, (count == 4));
+
+   memset(mac, 0, 1024);
+   p_crypt_so->p_SHA1(in->address, in->length, mac);
+   mac_len = 20;
+
+   if (flags == 1) {
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else if (flags == 2) {
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else {
+      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
+      out->length = mac_len;
+   }
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_sha256(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+{
+   int mac_len, len;
+   char mac[1024];
+
+   MGPW_ARG_COUNT(count, 3);
+   out->address[0] = '\0';
+   out->length = 0;
+   MGPW_CRYPT_LOAD(error, (count == 4));
+
+   memset(mac, 0, 1024);
+   p_crypt_so->p_SHA256(in->address, in->length, mac);
+   mac_len = 32;
+
+   if (flags == 1) {
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else if (flags == 2) {
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else {
+      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
+      out->length = mac_len;
+   }
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_sha512(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+{
+   int mac_len, len;
+   char mac[1024];
+
+   MGPW_ARG_COUNT(count, 3);
+   out->address[0] = '\0';
+   out->length = 0;
+   MGPW_CRYPT_LOAD(error, (count == 4));
+
+   memset(mac, 0, 1024);
+   p_crypt_so->p_SHA512(in->address, in->length, mac);
+   mac_len = 64;
+
+   if (flags == 1) {
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else if (flags == 2) {
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else {
+      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
+      out->length = mac_len;
+   }
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_md5(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+{
+   int mac_len, len;
+   char mac[1024];
+
+   MGPW_ARG_COUNT(count, 3);
+   out->address[0] = '\0';
+   out->length = 0;
+   MGPW_CRYPT_LOAD(error, (count == 4));
+
+   memset(mac, 0, 1024);
+   p_crypt_so->p_MD5(in->address, in->length, mac);
+   mac_len = 16;
+
+   if (flags == 1) {
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else if (flags == 2) {
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else {
+      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
+      out->length = mac_len;
+   }
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_hmac_sha1(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+{
+   int mac_len, len;
+   char mac[1024];
+
+   MGPW_ARG_COUNT(count, 4);
+   out->address[0] = '\0';
+   out->length = 0;
+   MGPW_CRYPT_LOAD(error, (count == 5));
+
+   memset(mac, 0, 1024);
+   p_crypt_so->p_HMAC(p_crypt_so->p_EVP_sha1(), key->address, key->length, in->address, in->length, mac, &mac_len);
+
+   if (flags == 1) {
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else if (flags == 2) {
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else {
+      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
+      out->length = mac_len;
+   }
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_hmac_sha256(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+{
+   int mac_len, len;
+   char mac[1024];
+
+   MGPW_ARG_COUNT(count, 4);
+   out->address[0] = '\0';
+   out->length = 0;
+   MGPW_CRYPT_LOAD(error, (count == 5));
+
+   memset(mac, 0, 1024);
+   p_crypt_so->p_HMAC(p_crypt_so->p_EVP_sha256(), key->address, key->length, in->address, in->length, mac, &mac_len);
+
+   if (flags == 1) {
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else if (flags == 2) {
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else {
+      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
+      out->length = mac_len;
+   }
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_hmac_sha512(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+{
+   int mac_len, len;
+   char mac[1024];
+
+   MGPW_ARG_COUNT(count, 4);
+   out->address[0] = '\0';
+   out->length = 0;
+   MGPW_CRYPT_LOAD(error, (count == 5));
+
+   memset(mac, 0, 1024);
+   p_crypt_so->p_HMAC(p_crypt_so->p_EVP_sha512(), key->address, key->length, in->address, in->length, mac, &mac_len);
+
+   if (flags == 1) {
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else if (flags == 2) {
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else {
+      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
+      out->length = mac_len;
+   }
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_hmac_md5(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
+{
+   int mac_len, len;
+   char mac[1024];
+
+   MGPW_ARG_COUNT(count, 4);
+   out->address[0] = '\0';
+   out->length = 0;
+   MGPW_CRYPT_LOAD(error, (count == 5));
+
+   memset(mac, 0, 1024);
+   p_crypt_so->p_HMAC(p_crypt_so->p_EVP_md5(), key->address, key->length, in->address, in->length, mac, &mac_len);
+
+   if (flags == 1) {
+      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else if (flags == 2) {
+      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
+      out->address[len] = '\0';
+      out->length = len;
+   }
+   else {
+      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
+      out->length = mac_len;
+   }
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_encode_b64(int count, ydb_string_t *in, ydb_string_t *out)
+{
+   int len;
+
+   MGPW_ARG_COUNT(count, 2);
+   out->address[0] = '\0';
+   out->length = 0;
+
+   len = mgpw_b64_encode((char *) in->address, in->length, out->address, 0);
+   out->address[len] = '\0';
+   out->length = len;
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_decode_b64(int count, ydb_string_t *in, ydb_string_t *out)
+{
+   int len;
+
+   MGPW_ARG_COUNT(count, 2);
+   out->address[0] = '\0';
+   out->length = 0;
+
+   len = mgpw_b64_decode((char *) in->address, in->length, out->address);
+   out->address[len] = '\0';
+   out->length = len;
+
+   return YDB_OK;
+}
+
+
+MGPW_EXTFUN(int) mg_crc32(int count, ydb_string_t *in, ydb_uint_t *out)
+{
+   MGPW_ARG_COUNT(count, 2);
+
+   *out = (ydb_uint_t) mgpw_crc32_checksum(in->address, (size_t) in->length);
+
+   return YDB_OK;
+}
+
+
+/* v1.3.3 */
 MGPW_EXTFUN(int) mg_dbopen(int count, ydb_string_t *dbtype, ydb_string_t *path, ydb_string_t *host, ydb_string_t *port, ydb_string_t *username, ydb_string_t *password, ydb_string_t *nspace, ydb_string_t *parameters)
 {
    int n, rc;
@@ -121,6 +460,8 @@ MGPW_EXTFUN(int) mg_dbopen(int count, ydb_string_t *dbtype, ydb_string_t *path, 
 #if !defined(_WIN32)
    struct sigaction oldact;
 #endif
+
+   MGPW_ARG_COUNT(count, 7);
 
    if (!gblock.buf_addr) {
       gblock.buf_addr = (char *) malloc(DBX_BUFFER);
@@ -172,11 +513,18 @@ MGPW_EXTFUN(int) mg_dbopen(int count, ydb_string_t *dbtype, ydb_string_t *path, 
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_OPEN);
 
+   isc_net_connection = 0;
+   if (path->length == 0 && host->length > 0 && port->length > 0) {
+      isc_net_connection = 1;
+   }
+
 #if !defined(_WIN32)
    sigaction(SIGALRM, NULL, &oldact);
 #endif
 
    rc = dbx_open((unsigned char *) pblock->buf_addr, NULL);
+memcpy(error_message, pblock->buf_addr, pblock->len_used);
+error_message_len = pblock->len_used;
 
 #if !defined(_WIN32)
    sigaction(SIGALRM, &oldact, NULL);
@@ -219,10 +567,11 @@ MGPW_EXTFUN(int) mg_dbget(int count, ydb_string_t *data, ydb_string_t *k1, ydb_s
    int rc;
    DBXSTR *pblock;
 
-   if (!gblock.buf_addr || !gresult.address) {
-      return YDB_FAILURE;
-   }
+   MGPW_ARG_COUNT(count, 2);
+   data->address[0] = '\0';
    data->length = 0;
+   MGPW_DB_CONNECTED(gblock, gresult);
+
    pblock = &gblock;
    pblock->len_used = 0;
 
@@ -245,9 +594,9 @@ MGPW_EXTFUN(int) mg_dbset(int count, ydb_string_t *data, ydb_string_t *k1, ydb_s
    DBXSTR *pblock;
    ydb_string_t *presult;
 
-   if (!gblock.buf_addr || !gresult.address) {
-      return YDB_FAILURE;
-   }
+   MGPW_ARG_COUNT(count, 2);
+   MGPW_DB_CONNECTED(gblock, gresult);
+
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
@@ -257,7 +606,7 @@ MGPW_EXTFUN(int) mg_dbset(int count, ydb_string_t *data, ydb_string_t *k1, ydb_s
    mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
    mg_add_block_data(pblock, (unsigned char *) data->address, (unsigned long) data->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
-   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GSET);
 
    rc = dbx_set((unsigned char *) pblock->buf_addr, NULL);
 
@@ -273,9 +622,9 @@ MGPW_EXTFUN(int) mg_dbkill(int count, ydb_string_t *k1, ydb_string_t *k2, ydb_st
    DBXSTR *pblock;
    ydb_string_t *presult;
 
-   if (!gblock.buf_addr || !gresult.address) {
-      return YDB_FAILURE;
-   }
+   MGPW_ARG_COUNT(count, 1);
+   MGPW_DB_CONNECTED(gblock, gresult);
+
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
@@ -284,7 +633,7 @@ MGPW_EXTFUN(int) mg_dbkill(int count, ydb_string_t *k1, ydb_string_t *k2, ydb_st
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mgpw_pack_args(pblock, count, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
-   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GDELETE);
 
    rc = dbx_delete((unsigned char *) pblock->buf_addr, NULL);
 
@@ -299,15 +648,17 @@ MGPW_EXTFUN(int) mg_dborder(int count, ydb_string_t *data, ydb_string_t *k1, ydb
    int rc;
    DBXSTR *pblock;
 
-   if (!gblock.buf_addr || !gresult.address) {
-      return YDB_FAILURE;
-   }
+   MGPW_ARG_COUNT(count, 3);
+   data->address[0] = '\0';
+   data->length = 0;
+   MGPW_DB_CONNECTED(gblock, gresult);
+
    pblock = &gblock;
    pblock->len_used = 0;
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
-   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GNEXT);
 
    rc = dbx_next((unsigned char *) pblock->buf_addr, NULL);
 
@@ -322,15 +673,17 @@ MGPW_EXTFUN(int) mg_dbprevious(int count, ydb_string_t *data, ydb_string_t *k1, 
    int rc;
    DBXSTR *pblock;
 
-   if (!gblock.buf_addr || !gresult.address) {
-      return YDB_FAILURE;
-   }
+   MGPW_ARG_COUNT(count, 3);
+   data->address[0] = '\0';
+   data->length = 0;
+   MGPW_DB_CONNECTED(gblock, gresult);
+
    pblock = &gblock;
    pblock->len_used = 0;
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
-   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GPREVIOUS);
 
    rc = dbx_previous((unsigned char *) pblock->buf_addr, NULL);
 
@@ -340,348 +693,34 @@ MGPW_EXTFUN(int) mg_dbprevious(int count, ydb_string_t *data, ydb_string_t *k1, 
 }
 
 
-int mgpw_pack_args(DBXSTR *pblock, int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
+MGPW_EXTFUN(int) mg_dbfunction(int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
 {
-   int n;
-   
-   n = 0;
-   mg_add_block_data(pblock, (unsigned char *) k1->address, (unsigned long) k1->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
-   if (++ n >= count)
-      return YDB_OK;
-   mg_add_block_data(pblock, (unsigned char *) k2->address, (unsigned long) k2->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
-   if (++ n >= count)
-      return YDB_OK;
-   mg_add_block_data(pblock, (unsigned char *) k3->address, (unsigned long) k3->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
-   if (++ n >= count)
-      return YDB_OK;
-   mg_add_block_data(pblock, (unsigned char *) k4->address, (unsigned long) k4->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
-   if (++ n >= count)
-      return YDB_OK;
-   return YDB_OK;
-}
+   int rc;
+   DBXSTR *pblock;
 
+   MGPW_ARG_COUNT(count, 2);
+   data->address[0] = '\0';
+   data->length = 0;
+   MGPW_DB_CONNECTED(gblock, gresult);
 
-int mgpw_unpack_result(DBXSTR *pblock, ydb_string_t *out)
-{
-   int rc, dsort, dtype;
-   unsigned long data_len;
-
-   data_len = mg_get_block_size(pblock, 0, &dsort, &dtype);
-   if (dsort == DBX_DSORT_ERROR) {
-      memcpy((void *) error_message, (void *) (pblock->buf_addr + 5), (size_t) data_len);
-      error_message_len = data_len;
-      out->length = 0;
-      rc = YDB_FAILURE;
+   if (isc_net_connection == 0) {
+      strcpy(error_message, "ISC functions can only be invoked over network connections");
+      error_message_len = (int) strlen(error_message);
+      return YDB_FAILURE;
    }
-   else {
-      memcpy((void *) out->address, (void *) (pblock->buf_addr + 5), (size_t) pblock->len_used);
-      out->length = data_len;
-      rc = YDB_OK;
-   }
+
+   pblock = &gblock;
+   pblock->len_used = 0;
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_FUNCTION);
+
+   rc = dbx_function((unsigned char *) pblock->buf_addr, NULL);
+
+   mgpw_unpack_result(pblock, data);
 
    return rc;
-}
-
-
-MGPW_EXTFUN(int) mg_version(int count, ydb_string_t *out)
-{
-   if (count < 1) {
-      return YDB_FAILURE;
-   }
-   sprintf((char *) out->address, "mg_pwind:%s", MGPW_VERSION);
-   out->length = (int) strlen(out->address);
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_crypt_library(int count, ydb_string_t *in)
-{
-   if (count < 1) {
-      return YDB_FAILURE;
-   }
-   strcpy(p_crypt_so->libnam, in->address);
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_ssl_version(int count, ydb_string_t *out, ydb_string_t *error)
-{
-   MGPW_CRYPT_LOAD(error);
-
-   strcpy((char *) out->address, p_crypt_so->p_OpenSSL_version(0));
-   out->length = (int) strlen(out->address);
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_sha1(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
-{
-   int mac_len, len;
-   char mac[1024];
-
-   MGPW_CRYPT_LOAD(error);
-
-   memset(mac, 0, 1024);
-   p_crypt_so->p_SHA1(in->address, in->length, mac);
-   mac_len = 20;
-
-   if (flags == 1) {
-      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else if (flags == 2) {
-      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else {
-      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
-      out->length = mac_len;
-   }
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_sha256(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
-{
-   int mac_len, len;
-   char mac[1024];
-
-   MGPW_CRYPT_LOAD(error);
-
-   memset(mac, 0, 1024);
-   p_crypt_so->p_SHA256(in->address, in->length, mac);
-   mac_len = 32;
-
-   if (flags == 1) {
-      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else if (flags == 2) {
-      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else {
-      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
-      out->length = mac_len;
-   }
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_sha512(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
-{
-   int mac_len, len;
-   char mac[1024];
-
-   MGPW_CRYPT_LOAD(error);
-
-   memset(mac, 0, 1024);
-   p_crypt_so->p_SHA512(in->address, in->length, mac);
-   mac_len = 64;
-
-   if (flags == 1) {
-      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else if (flags == 2) {
-      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else {
-      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
-      out->length = mac_len;
-   }
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_md5(int count, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
-{
-   int mac_len, len;
-   char mac[1024];
-
-   MGPW_CRYPT_LOAD(error);
-
-   memset(mac, 0, 1024);
-   p_crypt_so->p_MD5(in->address, in->length, mac);
-   mac_len = 16;
-
-   if (flags == 1) {
-      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else if (flags == 2) {
-      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else {
-      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
-      out->length = mac_len;
-   }
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_hmac_sha1(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
-{
-   int mac_len, len;
-   char mac[1024];
-
-   MGPW_CRYPT_LOAD(error);
-
-   memset(mac, 0, 1024);
-   p_crypt_so->p_HMAC(p_crypt_so->p_EVP_sha1(), key->address, key->length, in->address, in->length, mac, &mac_len);
-
-   if (flags == 1) {
-      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else if (flags == 2) {
-      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else {
-      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
-      out->length = mac_len;
-   }
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_hmac_sha256(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
-{
-   int mac_len, len;
-   char mac[1024];
-
-   MGPW_CRYPT_LOAD(error);
-
-   memset(mac, 0, 1024);
-   p_crypt_so->p_HMAC(p_crypt_so->p_EVP_sha256(), key->address, key->length, in->address, in->length, mac, &mac_len);
-
-   if (flags == 1) {
-      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else if (flags == 2) {
-      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else {
-      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
-      out->length = mac_len;
-   }
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_hmac_sha512(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
-{
-   int mac_len, len;
-   char mac[1024];
-
-   MGPW_CRYPT_LOAD(error);
-
-   memset(mac, 0, 1024);
-   p_crypt_so->p_HMAC(p_crypt_so->p_EVP_sha512(), key->address, key->length, in->address, in->length, mac, &mac_len);
-
-   if (flags == 1) {
-      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else if (flags == 2) {
-      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else {
-      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
-      out->length = mac_len;
-   }
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_hmac_md5(int count, ydb_string_t *key, ydb_string_t *in, ydb_int_t flags, ydb_string_t *out, ydb_string_t *error)
-{
-   int mac_len, len;
-   char mac[1024];
-
-   MGPW_CRYPT_LOAD(error);
-
-   memset(mac, 0, 1024);
-   p_crypt_so->p_HMAC(p_crypt_so->p_EVP_md5(), key->address, key->length, in->address, in->length, mac, &mac_len);
-
-   if (flags == 1) {
-      len = mgpw_b64_encode((char *) mac, mac_len, out->address, 0);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else if (flags == 2) {
-      len = mgpw_hex_encode((char *) mac, mac_len, out->address);
-      out->address[len] = '\0';
-      out->length = len;
-   }
-   else {
-      memcpy((void *) out->address, (void *) mac, (size_t) mac_len);
-      out->length = mac_len;
-   }
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_encode_b64(int count, ydb_string_t *in, ydb_string_t *out)
-{
-   int len;
-
-   len = mgpw_b64_encode((char *) in->address, in->length, out->address, 0);
-   out->address[len] = '\0';
-   out->length = len;
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_decode_b64(int count, ydb_string_t *in, ydb_string_t *out)
-{
-   int len;
-
-   len = mgpw_b64_decode((char *) in->address, in->length, out->address);
-   out->address[len] = '\0';
-   out->length = len;
-
-   return YDB_OK;
-}
-
-
-MGPW_EXTFUN(int) mg_crc32(int count, ydb_string_t *in, ydb_uint_t *out)
-{
-   *out = (ydb_uint_t) mgpw_crc32_checksum(in->address, (size_t) in->length);
-
-   return YDB_OK;
 }
 
 
@@ -1020,6 +1059,7 @@ int mgpw_crypt_load_library(MGPWCRYPTSO *p_crypt_so)
 mgpw_crypt_load_library:
 
    if (error_message[0]) {
+      error_message_len = (int) strlen(error_message);
       p_crypt_so->loaded = 0;
       error_code = 1009;
       result = YDB_FAILURE;
@@ -1030,239 +1070,66 @@ mgpw_crypt_load_library:
 }
 
 
-#if 0
-int ydb_load_library(MGPWYDBSO *p_ydb_so)
+int mgpw_pack_args(DBXSTR *pblock, int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
 {
-   int n, len, result;
-   char primlib[MGPW_ERROR_SIZE], primerr[MGPW_ERROR_SIZE];
-   char fun[64];
-   char *libnam[16];
-
-   strcpy(p_ydb_so->funprfx, "ydb");
-   strcpy(p_ydb_so->dbname, "YottaDB");
-
-   len = (int) strlen(p_ydb_so->libdir);
-   if (p_ydb_so->libdir[len - 1] != '/' && p_ydb_so->libdir[len - 1] != '\\') {
-      p_ydb_so->libdir[len] = '/';
-      len ++;
-   }
-
+   int n;
+   
    n = 0;
-#if defined(_WIN32)
-   libnam[n ++] = (char *) MGPW_YDB_DLL;
-#else
-#if defined(MACOSX)
-   libnam[n ++] = (char *) MGPW_YDB_DYLIB;
-   libnam[n ++] = (char *) MGPW_YDB_SO;
-#else
-   libnam[n ++] = (char *) MGPW_YDB_SO;
-   libnam[n ++] = (char *) MGPW_YDB_DYLIB;
-#endif
-#endif
-
-   libnam[n ++] = NULL;
-   strcpy(p_ydb_so->libnam, p_ydb_so->libdir);
-   len = (int) strlen(p_ydb_so->libnam);
-
-   for (n = 0; libnam[n]; n ++) {
-      strcpy(p_ydb_so->libnam + len, libnam[n]);
-      if (!n) {
-         strcpy(primlib, p_ydb_so->libnam);
-      }
-
-      p_ydb_so->p_library = mgpw_dso_load(p_ydb_so->libnam);
-      if (p_ydb_so->p_library) {
-         break;
-      }
-
-      if (!n) {
-         int len1, len2;
-         char *p;
-#if defined(_WIN32)
-         DWORD errorcode;
-         LPVOID lpMsgBuf;
-
-         lpMsgBuf = NULL;
-         errorcode = GetLastError();
-         sprintf(error_message, "Error loading %s Library: %s; Error Code : %ld",  p_ydb_so->dbname, primlib, errorcode);
-         len2 = (int) strlen(error_message);
-         len1 = FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                        NULL,
-                        errorcode,
-                        /* MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), */
-                        MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
-                        (LPTSTR) &lpMsgBuf,
-                        0,
-                        NULL 
-                        );
-         if (lpMsgBuf && len1 > 0 && (MGPW_ERROR_SIZE - len2) > 30) {
-            strncpy(primerr, (const char *) lpMsgBuf, MGPW_ERROR_SIZE - 1);
-            p = strstr(primerr, "\r\n");
-            if (p)
-               *p = '\0';
-            len1 = (MGPW_ERROR_SIZE - (len2 + 10));
-            if (len1 < 1)
-               len1 = 0;
-            primerr[len1] = '\0';
-            p = strstr(primerr, "%1");
-            if (p) {
-               *p = 'I';
-               *(p + 1) = 't';
-            }
-            strcat(error_message, " (");
-            strcat(error_message, primerr);
-            strcat(error_message, ")");
-         }
-         if (lpMsgBuf)
-            LocalFree(lpMsgBuf);
-#else
-         p = (char *) dlerror();
-         sprintf(primerr, "Cannot load %s library: Error Code: %d", p_ydb_so->dbname, errno);
-         len2 = strlen(error_message);
-         if (p) {
-            strncpy(primerr, p, MGPW_ERROR_SIZE - 1);
-            primerr[MGPW_ERROR_SIZE - 1] = '\0';
-            len1 = (MGPW_ERROR_SIZE - (len2 + 10));
-            if (len1 < 1)
-               len1 = 0;
-            primerr[len1] = '\0';
-            strcat(error_message, " (");
-            strcat(error_message, primerr);
-            strcat(error_message, ")");
-         }
-#endif
-      }
-   }
-
-   if (!p_ydb_so->p_library) {
-      goto ydb_load_library_exit;
-   }
-
-   sprintf(fun, "%s_init", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_init = (int (*) (void)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_init) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_exit", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_exit = (int (*) (void)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_exit) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_malloc", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_malloc = (int (*) (size_t)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_malloc) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_free", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_free = (int (*) (void *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_free) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_data_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_data_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, unsigned int *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_data_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_delete_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_delete_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_delete_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_set_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_set_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_set_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_get_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_get_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_get_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_subscript_next_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_subscript_next_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_subscript_next_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_subscript_previous_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_subscript_previous_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_subscript_previous_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_node_next_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_node_next_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_node_next_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_node_previous_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_node_previous_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, int *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_node_previous_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_incr_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_incr_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *, ydb_buffer_t *, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_incr_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_ci", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_ci = (int (*) (const char *, ...)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_ci) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-   sprintf(fun, "%s_cip", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_cip = (int (*) (ci_name_descriptor *, ...)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_cip) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-
-   sprintf(fun, "%s_lock_incr_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_lock_incr_s = (int (*) (unsigned long long, ydb_buffer_t *, int, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_lock_incr_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-
-   sprintf(fun, "%s_lock_decr_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_lock_decr_s = (int (*) (ydb_buffer_t *, int, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-   if (!p_ydb_so->p_ydb_lock_decr_s) {
-      sprintf(error_message, "Error loading %s library: %s; Cannot locate the following function : %s", p_ydb_so->dbname, p_ydb_so->libnam, fun);
-      goto ydb_load_library_exit;
-   }
-
-   sprintf(fun, "%s_zstatus", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_zstatus = (void (*) (ydb_char_t *, ydb_long_t)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-
-   sprintf(fun, "%s_tp_s", p_ydb_so->funprfx);
-   p_ydb_so->p_ydb_tp_s = (int (*) (ydb_tpfnptr_t, void *, const char *, int, ydb_buffer_t *)) mgpw_dso_sym(p_ydb_so->p_library, (char *) fun);
-
-   p_ydb_so->loaded = 1;
-
-ydb_load_library_exit:
-
-   if (error_message[0]) {
-      p_ydb_so->loaded = 0;
-      error_code = 1009;
-      result = YDB_FAILURE;
-      return result;
-   }
+   mg_add_block_data(pblock, (unsigned char *) k1->address, (unsigned long) k1->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k2->address, (unsigned long) k2->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k3->address, (unsigned long) k3->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k4->address, (unsigned long) k4->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k5->address, (unsigned long) k5->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k6->address, (unsigned long) k6->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k7->address, (unsigned long) k7->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k8->address, (unsigned long) k8->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k9->address, (unsigned long) k9->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
+   mg_add_block_data(pblock, (unsigned char *) k10->address, (unsigned long) k10->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   if (++ n >= count)
+      return YDB_OK;
 
    return YDB_OK;
 }
-#endif
+
+
+int mgpw_unpack_result(DBXSTR *pblock, ydb_string_t *out)
+{
+   int rc, dsort, dtype;
+   unsigned long data_len;
+
+   data_len = mg_get_block_size(pblock, 0, &dsort, &dtype);
+   if (dsort == DBX_DSORT_ERROR) {
+      memcpy((void *) error_message, (void *) (pblock->buf_addr + 5), (size_t) data_len);
+      error_message_len = data_len;
+      out->length = 0;
+      rc = YDB_FAILURE;
+   }
+   else {
+      memcpy((void *) out->address, (void *) (pblock->buf_addr + 5), (size_t) pblock->len_used);
+      out->length = data_len;
+      rc = YDB_OK;
+   }
+
+   return rc;
+}
 
 
 int mgpw_set_size(unsigned char *str, unsigned long data_len)
@@ -2371,16 +2238,18 @@ int mgpw_domsrv_recvfd(char *key, char *options, char *error)
 */
 
 /* experiental code */
+/*
 #if 0
    if (1) {
       strcpy(p_ydb_so->libdir, "/usr/local/lib/yottadb/r130");
-      //ydb_load_library(p_ydb_so);
+      ydb_load_library(p_ydb_so);
    
       if (p_ydb_so->p_library) {
          rc = p_ydb_so->p_ydb_init();
       }
    }
 #endif
+*/
 
    return YDB_OK;
 }

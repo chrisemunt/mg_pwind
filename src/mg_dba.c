@@ -5,7 +5,7 @@
    |              and YottaDB API                                             |
    | Author:      Chris Munt cmunt@mgateway.com                               |
    |                         chris.e.munt@gmail.com                           |
-   | Copyright (c) 2017-2021 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2017-2022 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -67,6 +67,9 @@ Version 1.3.10 5 April 2021:
 
 Version 1.3.11 26 October 2021:
    Ensure that data strings returned from YottaDB are correctly terminated.
+
+Version 1.3.12 15 February 2022:
+   Modifications to allow access to ISC databases from mg_pwind.
 
 */
 
@@ -725,7 +728,7 @@ DBX_EXTFUN(int) dbx_get_ex(DBXMETH *pmeth)
       }
       else {
          mg_create_string(pmeth, (void *) "", DBX_DTYPE_STR);
-         rc = CACHE_FAILURE;
+         /* v1.3.12 */
       }
    }
 
@@ -2824,9 +2827,7 @@ int isc_error_message(DBXMETH *pmeth, int error_code)
    if (pcon->error[0]) {
       goto isc_error_message_exit;
    }
-
    pcon->error[0] = '\0';
-
    size1 = size;
 
    if (pcon->p_isc_so && pcon->p_isc_so->p_CacheErrxlateA) {
@@ -2837,6 +2838,7 @@ int isc_error_message(DBXMETH *pmeth, int error_code)
          rc = pcon->p_isc_so->p_CacheErrxlateA(error_code, pcerror);
 
          pcerror->str[50] = '\0';
+         len = 0;
 
          if (pcerror->len > 0) {
             len = pcerror->len;
@@ -2848,6 +2850,9 @@ int isc_error_message(DBXMETH *pmeth, int error_code)
          }
          mg_free((void *) pcerror, 801);
          size1 -= (int) strlen(pcon->error);
+         if (len) { /* v1.3.12 */
+            goto isc_error_message_exit;
+         }
       }
    }
 
@@ -4956,9 +4961,9 @@ int mg_set_error_message(DBXMETH *pmeth)
    if (pcon->p_srv) {
       strcpy(((MGSRV *) pcon->p_srv)->error_mess, pcon->error);
    }
-   else {
+   if (pmeth->output_val.svalue.buf_addr && pmeth->output_val.svalue.len_alloc > 0) { /* v1.3.12 */
       len = (int) strlen(pcon->error);
-      strcpy((char *) pmeth->output_val.svalue.buf_addr + pmeth->output_val.svalue.len_used, pcon->error   );
+      strcpy((char *) pmeth->output_val.svalue.buf_addr + pmeth->output_val.svalue.len_used, pcon->error);
       pmeth->output_val.svalue.len_used += len;
       mg_add_block_size(&(pmeth->output_val.svalue), 0, (unsigned long) len, DBX_DSORT_ERROR, DBX_DTYPE_DBXSTR);
    }
@@ -6781,6 +6786,7 @@ int mg_db_connect(MGSRV *p_srv, int *p_chndle, short context)
    pcon->chndle = *p_chndle;
    p_srv->pcon[*p_chndle] = connection[*p_chndle];
 
+   pcon->use_db_mutex = 0; /* v1.3.12 */
    pcon->tlevel = 0;
    pcon->p_isc_so = NULL;
    pcon->p_ydb_so = NULL;
