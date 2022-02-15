@@ -3,9 +3,9 @@
 Access to OS libraries (e.g. the cryptography library) from **YottaDB** code.
 
 Chris Munt <cmunt@mgateway.com>  
-23 March 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+15 February 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Current Release: Version: 1.2; Revision 2.
+* Current Release: Version: 1.3; Revision 3.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 Contents
@@ -14,6 +14,8 @@ Contents
 * [Pre-requisites](#PreReq")
 * [Installing mg\_pwind](#Install)
 * [Invocation of mg\_pwind functions](#DBFunctions)
+* [Cryptographic functions](#DBCrypto)
+* [Accessing InterSystems databases](#DBISC)
 * [For the future](#Future)
 * [License](#License)
 
@@ -67,153 +69,284 @@ Before invoking **mg\pwind** functions the following environment variable (**ydb
 
 Of course, modify the path to suit your own installation.
 
-Many of the functions described here will return an **error** variable.  Success of the operation is indicated by this variable being returned as an empty string ("").
+When calling **mg\_pwind** functions be sure to pass output variables by reference (i.e. preceded by a period character).
 
-Some functions include a **mode** flag.  Set this flag as follows:
+### Get the version of the mg\_pwind library
+
+       set status=$&pwind.version(.<version>)
+      
+Example:
+
+       set status=$&pwind.version(.vers)
+       write !,"version: ",vers
+
+### Get the last error message
+
+Some of the **mg\_pwind** functions will return an **error** variable.  Success of the operation is indicated by this variable being returned as an empty string ("").  All functions will return a status code which will be returned as zero if the function completes successfully.  If the function call is not successful then a non-zero status code will be returned, a M exception will be thrown and the corresponding error message may be retrieved by the **error** function.  
+
+       set status=$&pwind.error(.<error>)
+      
+Example:
+
+             new $ztrap set $ztrap="zgoto "_$zlevel_":error"
+             set status=$&pwind.sslversion(.vers)
+             write !,"SSL version: ",vers
+             quit
+       error ; error
+             set status=$&pwind.error(.error)
+             write !,"error: ",error
+             quit
+
+
+## <a name="DBCrypto"> Cryptographic functions
+
+Some functions in this section include a **mode** flag.  Set this flag as follows:
 
 * mode=0: The default.  Return the raw hash or HMAC value.
 * mode=1: Return the hash or HMAC value as B64 encoded.
 * mode=2: Return the hash or HMAC value as a string of HEX values.
 
-When calling **mg\_pwind** functions be sure to pass output variables by reference (i.e. preceded by a period character).
-
-### Get the version of the mg\_pwind library
-
-       do &pwind.version(.<version>)
-      
-Example:
-
-       do &pwind.version(.vers)
-       write !,"version: ",vers
-
-
 ### Specifying the location of the OpenSSL libraries
 
 It will not be necessary to use this function for most systems as the **libcrypto.so** library is usually readily available from the OS known directories for shared libraries.  However, if you need to specify an alternative location for the **libcrypto.so** library then use this function to specify the name and full path. 
 
-       do &pwind.cryptlibrary(<cryptlibrary>)
+       set status=$&pwind.cryptlibrary(<cryptlibrary>)
       
 Example:
 
-      do &pwind.cryptlibrary("/unusual/location/libcrypto.so")
+       set status=$&pwind.cryptlibrary("/unusual/location/libcrypto.so")
 
 ### Get the version of the OpenSSL libraries
 
-       do &pwind.sslversion(.<version>, .<error>)
+       set status=$&pwind.sslversion(.<version>)
       
 Example:
 
-      do &pwind.sslversion(.vers,.error)
-      if error'="" w !,"error: ",error
-      write !,"sslversion: ",vers
+       set status=$&pwind.sslversion(.vers)
+       write !,"SSL version: ",vers
 
 ### Generate SHA1 hash
 
-       do &pwind.sha1(<data>, <mode>, .<hash>, .<error>)
+       set status=$&pwind.sha1(<data>, <mode>, .<hash>)
       
 Example:
 
-      do &pwind.sha1("my data",2,.hash,.error)
-      if error'="" w !,"error: ",error
-      write !,"SHA1 hash: ",hash
+       set status=$&pwind.sha1("my data",2,.hash)
+       write !,"SHA1 hash: ",hash
 
 
 ### Generate SHA256 hash
 
-       do &pwind.sha256(<data>, <mode>, .<hash>, .<error>)
+       set status=$&pwind.sha256(<data>, <mode>, .<hash>)
       
 Example:
 
-      do &pwind.sha256("my data",2,.hash,.error)
-      if error'="" w !,"error: ",error
-      write !,"SHA256 hash: ",hash
+       set status=$&pwind.sha256("my data",2,.hash)
+       write !,"SHA256 hash: ",hash
 
 ### Generate SHA512 hash
 
-       do &pwind.sha512(<data>, <mode>, .<hash>, .<error>)
+       set status=$&pwind.sha512(<data>, <mode>, .<hash>)
       
 Example:
 
-      do &pwind.sha512("my data",2,.hash,.error)
-      if error'="" w !,"error: ",error
-      write !,"SHA512 hash: ",hash
+       set status=$&pwind.sha512("my data",2,.hash)
+       write !,"SHA512 hash: ",hash
 
 ### Generate MD5 hash
 
-       do &pwind.md5(<data>, <mode>, .<hash>, .<error>)
+       set status=$&pwind.md5(<data>, <mode>, .<hash>)
       
 Example:
 
-      do &pwind.md5("my data",2,.hash,.error)
-      if error'="" w !,"error: ",error
-      write !,"MD5 hash: ",hash
+       set status=$&pwind.md5("my data",2,.hash)
+       write !,"MD5 hash: ",hash
 
 ### Generate SHA1 HMAC
 
-       do &pwind.hmacsha1(<key>, <data>, <mode>, .<hmac>, .<error>)
+       set status=$&pwind.hmacsha1(<key>, <data>, <mode>, .<hmac>)
       
 Example:
 
-      do &pwind.hmacsha1("my key","my data",2,.hmac,.error)
-      if error'="" w !,"error: ",error
-      write !,"SHA1 HMAC: ",hmac
+       set status=$&pwind.hmacsha1("my key","my data",2,.hmac)
+       write !,"SHA1 HMAC: ",hmac
 
 ### Generate SHA256 HMAC
 
-       do &pwind.hmacsha256(<key>, <data>, <mode>, .<hmac>, .<error>)
+       set status=$&pwind.hmacsha256(<key>, <data>, <mode>, .<hmac>)
       
 Example:
 
-      do &pwind.hmacsha256("my key","my data",2,.hmac,.error)
-      if error'="" w !,"error: ",error
-      write !,"SHA256 HMAC: ",hmac
+       set status=$&pwind.hmacsha256("my key","my data",2,.hmac)
+       write !,"SHA256 HMAC: ",hmac
 
 ### Generate SHA512 HMAC
 
-       do &pwind.hmacsha512(<key>, <data>, <mode>, .<hmac>, .<error>)
+       set status=$&pwind.hmacsha512(<key>, <data>, <mode>, .<hmac>)
       
 Example:
 
-      do &pwind.hmacsha512("my key","my data",2,.hmac,.error)
-      if error'="" w !,"error: ",error
-      write !,"SHA512 HMAC: ",hmac
+       set status=$&pwind.hmacsha512("my key","my data",2,.hmac)
+       write !,"SHA512 HMAC: ",hmac
 
 ### Generate MD5 HMAC
 
-       do &pwind.hmacmd5(<key>, <data>, <mode>, .<hmac>, .<error>)
+       set status=$&pwind.hmacmd5(<key>, <data>, <mode>, .<hmac>)
       
 Example:
 
-      do &pwind.hmacmd5("my key","my data",2,.hmac,.error)
-      if error'="" w !,"error: ",error
-      write !,"MD5 HMAC: ",hmac
+       set status=$&pwind.hmacmd5("my key","my data",2,.hmac)
+       write !,"MD5 HMAC: ",hmac
 
 ### B64 encode
 
-       do &pwind.encodeb64(<data>, .<b64>)
+       set status=$&pwind.encodeb64(<data>, .<b64>)
       
 Example:
 
-      do &pwind.encodeb64("my data",.b64)
-      write !,"B64 encode: ",b64
+       set status=$&pwind.encodeb64("my data",.b64)
+       write !,"B64 encode: ",b64
 
 ### B64 decode
 
-       do &pwind.decodeb64(<b64>, .<data>)
+       set status=$&pwind.decodeb64(<b64>, .<data>)
       
 Example:
 
-      do &pwind.decodeb64(b64,.data)
-      write !,"B64 decode: ",data
+       set status=$&pwind.decodeb64(b64,.data)
+       write !,"B64 decode: ",data
 
 ### Generate CRC32 checksum
 
-       do &pwind.crc32(<data>, .<crc32>)
+       set status=$&pwind.crc32(<data>, .<crc32>)
       
 Example:
 
-      do &pwind.crc32("my data",.crc32)
-      write !,"CRC32: ",crc32
+       set status=$&pwind.crc32("my data",.crc32)
+       write !,"CRC32: ",crc32
+
+
+## <a name="DBISC"> Accessing InterSystems databases
+
+This section describes an experimental approach to accessing data held in InterSystems databases (Cache, Ensemble and IRIS).  Two connectivity modes are supported:
+
+* High-performance in-process access to a local InterSystems database using the Cache/IRIS API.
+* Network based access to a local or remote InterSystems databases via the network.
+
+### Opening a connecting to the database
+
+       set status=$&pwind.dbopen(<dbtype>, <path>, <host>, <port>, <username>, <password>, <namespace>)
+
+* **dbtype** should be set to either Cache or IRIS as appropriate.
+* For API-based connectivity, specify the **path** and leave **host** and **port** empty.
+* For Network-based connectivity, leave the **path** empty and specify the **host** and **port** on which the **%zmgsi** superserver is listening.
+
+
+Example using the API:
+
+       set status=$&pwind.dbopen("Cache","/opt/cache20181/mgr","","","_SYSTEM","SYS","USER")
+
+Example using the network:
+
+       set status=$&pwind.dbopen("Cache","","localhost",7041,"_SYSTEM","SYS","USER")
+
+### Closing a connecting to the database
+
+       set status=$&pwind.dbclose()
+
+Example:
+
+       set status=$&pwind.dbclose()
+
+### Set a global record
+
+       set status=$&pwind.dbset(<data>, <global>, <key ...>)
+
+Example:
+
+       set status=$&pwind.dbset("my data record", "^MyGlobal", "my key")
+
+This is equivalent to:
+
+       set ^MyGlobal("my key")="my data record"
+
+### Get a global record
+
+       set status=$&pwind.dbget(.<data>, <global>, <key ...>)
+
+Example:
+
+       set status=$&pwind.dbget(.data, "^MyGlobal", "my key")
+
+This is equivalent to:
+
+       set data=$get(^MyGlobal("my key"))
+
+### Delete a global record
+
+       set status=$&pwind.dbkill(<global>, <key ...>)
+
+Example:
+
+       set status=$&pwind.dbkill("^MyGlobal", "my key")
+
+This is equivalent to:
+
+       kill ^MyGlobal("my key")
+
+### Get next global key record
+
+       set status=$&pwind.dbnext(.<nkey>, <global>, <key ...>)
+
+Example:
+
+       set status=$&pwind.dbnext(.nkey, "^MyGlobal", "")
+
+This is equivalent to:
+
+       set nkey=$order(^MyGlobal(""))
+
+### Get previous global key record
+
+       set status=$&pwind.dbprevious(.<pkey>, <global>, <key ...>)
+
+Example:
+
+       set status=$&pwind.dbprevious(.pkey, "^MyGlobal", "")
+
+This is equivalent to:
+
+       set pkey=$order(^MyGlobal(""),-1)
+
+
+### Invoke an InterSystems function
+
+* Note that this facility is only available over network-based connectivity 
+
+       set status=$&pwind.dbfunction(.<result>, <function>, <arguments ...>)
+
+Example:
+
+       set status=$&pwind.dbfunction(.result, "function^MyRoutine", "a", "b")
+
+This is equivalent to:
+
+       set result=$$function^MyRoutine("a","b")
+
+### A complete but simple example
+
+       ; Open a new connection to a local Cache database
+       set status=$&pwind.dbopen("Cache","/opt/cache20181/mgr","","","_SYSTEM","SYS","USER")
+       ; Kill a global
+       set status=$&pwind.dbkill("^MyGlobal")
+       ; Set up some new records
+       for n=1:1:10 set status=$&pwind.dbset("record "_n_" ("_$zh_")","^MyGlobal",n)
+       ; Now read them all back (in order)
+       set key="" for  set status=$&pwind.dborder(.key,"^MyGlobal",key) quit:key=""  set status=$&pwind.dbget(.data,"^MyGlobal",key) write !,key," = ",data
+       ; Read them all back (in reverse order)
+       set key="" for  set status=$&pwind.dbprevious(.key,"^MyGlobal",key) quit:key=""  set status=$&pwind.dbget(.data,"^MyGlobal",key) write !,key," = ",data
+       ; close the database connection
+       set status=$&pwind.dbclose()
 
 
 ## <a name="Future"></a> For the future
@@ -223,7 +356,7 @@ Further functions (and access to other OS libraries) will be added to **mg\_pwin
 
 ## <a name="License"></a> License
 
-Copyright (c) 2018-2021 M/Gateway Developments Ltd,
+Copyright (c) 2018-2022 M/Gateway Developments Ltd,
 Surrey UK.                                                      
 All rights reserved.
  
@@ -247,4 +380,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.2.2 (23 March 2021)
 
 * Introduce experimental network I/O layer.
+
+### v1.3.3 (15 February 2022)
+
+* Introduce experimental access to InterSystems databases.
 
