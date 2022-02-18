@@ -3,9 +3,9 @@
 Access to OS libraries (e.g. the cryptography library) from **YottaDB** code.
 
 Chris Munt <cmunt@mgateway.com>  
-15 February 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+18 February 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Current Release: Version: 1.3; Revision 3.
+* Current Release: Version: 1.3; Revision 4.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 Contents
@@ -16,6 +16,7 @@ Contents
 * [Invocation of mg\_pwind functions](#DBFunctions)
 * [Cryptographic functions](#DBCrypto)
 * [Accessing InterSystems databases](#DBISC)
+* [Access to InterSystems classes](#DBClasses)
 * [For the future](#Future)
 * [License](#License)
 
@@ -321,7 +322,7 @@ This is equivalent to:
 
 ### Invoke an InterSystems function
 
-* Note that this facility is only available over network-based connectivity 
+* Note: Recommend that functions are accessed over network-based connectivity (for now).
 
        set status=$&pwind.dbfunction(.<result>, <function>, <arguments ...>)
 
@@ -347,6 +348,66 @@ This is equivalent to:
        set key="" for  set status=$&pwind.dbprevious(.key,"^MyGlobal",key) quit:key=""  set status=$&pwind.dbget(.data,"^MyGlobal",key) write !,key," = ",data
        ; close the database connection
        set status=$&pwind.dbclose()
+
+## <a name="DBClasses"> Access to InterSystems classes
+
+To illustrate these methods, the following simple class will be used:
+
+       Class User.customer Extends %Persistent
+       {
+          Property number As %Integer;
+          Property name As %String;
+          ClassMethod MyClassMethod(x As %Integer) As %Integer
+          {
+             // do some work
+             Quit result
+          }
+          Method MyMethod(x As %Integer) As %Integer
+          {
+             // do some work
+             Quit result
+          }
+       }
+
+### Invoke a ClassMethod
+
+* Note: Recommend that classes are accessed over network-based connectivity (for now).
+
+       set status=$&pwind.dbclassmethod(.<result>, <class_name>, <method_name>, <arguments ...>)
+
+Example:
+
+       set status=$&pwind.dbclassmethod(.result,"User.customer","MyClassMethod",3)
+
+### Open a specific instance of a Class
+
+Example (using instance/record #1):
+
+       set status=$&pwind.dbclassmethod(.oref,"User.customer","%OpenId", 1)
+
+### Get a property
+
+       set status=$&pwind.dbgetproperty(.<data>, <object_reference>, <property_name>)
+
+Example:
+
+       set status=$&pwind.dbgetproperty(.name,oref,"name")
+
+### Set a property
+
+       set status=$&pwind.dbsetproperty(<data>, <object_reference>, <property_name>)
+
+Example:
+
+       set status=$&pwind.dbsetproperty(name,oref,"name")
+
+### Invoke a Method
+
+       set status=$&pwind.dbmethod(.<result>, <object_reference>, <method_name>), <arguments ...>)
+
+Example:
+
+       set status=$&pwind.dbmethod(.result,oref,"MyMethod",3)
 
 
 ## <a name="Future"></a> For the future
@@ -384,4 +445,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.3.3 (15 February 2022)
 
 * Introduce experimental access to InterSystems databases.
+
+### v1.3.4 (18 February 2022)
+
+* Introduce experimental access to InterSystems classes.
 
