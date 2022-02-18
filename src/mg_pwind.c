@@ -37,6 +37,9 @@ Version 1.2.2 23 March 2021:
 Version 1.3.3 15 February 2022:
    Introduce experimental access to InterSystems databases.
 
+Version 1.3.4 18 February 2022:
+   Introduce experimental access to InterSystems classes.
+
 */
 
 #include "mg_pwind.h"
@@ -702,13 +705,13 @@ MGPW_EXTFUN(int) mg_dbfunction(int count, ydb_string_t *data, ydb_string_t *k1, 
    data->address[0] = '\0';
    data->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
-
+/*
    if (isc_net_connection == 0) {
       strcpy(error_message, "ISC functions can only be invoked over network connections");
       error_message_len = (int) strlen(error_message);
       return YDB_FAILURE;
    }
-
+*/
    pblock = &gblock;
    pblock->len_used = 0;
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
@@ -717,6 +720,135 @@ MGPW_EXTFUN(int) mg_dbfunction(int count, ydb_string_t *data, ydb_string_t *k1, 
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_FUNCTION);
 
    rc = dbx_function((unsigned char *) pblock->buf_addr, NULL);
+
+   mgpw_unpack_result(pblock, data);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dbclassmethod(int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
+{
+   int rc;
+   DBXSTR *pblock;
+
+   MGPW_ARG_COUNT(count, 2);
+   data->address[0] = '\0';
+   data->length = 0;
+   MGPW_DB_CONNECTED(gblock, gresult);
+/*
+   if (isc_net_connection == 0) {
+      strcpy(error_message, "ISC class methods can only be invoked over network connections");
+      error_message_len = (int) strlen(error_message);
+      return YDB_FAILURE;
+   }
+*/
+   pblock = &gblock;
+   pblock->len_used = 0;
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_CCMETH);
+
+   rc = dbx_classmethod((unsigned char *) pblock->buf_addr, NULL);
+
+   mgpw_unpack_result(pblock, data);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dbgetproperty(int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *pname)
+{
+   int rc;
+   DBXSTR *pblock;
+
+   MGPW_ARG_COUNT(count, 2);
+   data->address[0] = '\0';
+   data->length = 0;
+   MGPW_DB_CONNECTED(gblock, gresult);
+/*
+   if (isc_net_connection == 0) {
+      strcpy(error_message, "ISC class properties can only be invoked over network connections");
+      error_message_len = (int) strlen(error_message);
+      return YDB_FAILURE;
+   }
+*/
+   pblock = &gblock;
+   pblock->len_used = 0;
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mg_add_block_data(pblock, (unsigned char *) oref->address, (unsigned long) oref->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   mg_add_block_data(pblock, (unsigned char *) pname->address, (unsigned long) pname->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_CGETP);
+
+   rc = dbx_getproperty((unsigned char *) pblock->buf_addr, NULL);
+
+   mgpw_unpack_result(pblock, data);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dbsetproperty(int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *pname)
+{
+   int rc;
+   DBXSTR *pblock;
+   ydb_string_t *presult;
+
+   MGPW_ARG_COUNT(count, 2);
+   MGPW_DB_CONNECTED(gblock, gresult);
+/*
+   if (isc_net_connection == 0) {
+      strcpy(error_message, "ISC class properties can only be invoked over network connections");
+      error_message_len = (int) strlen(error_message);
+      return YDB_FAILURE;
+   }
+*/
+   pblock = &gblock;
+   pblock->len_used = 0;
+   presult = &gresult;
+   presult->length = 0;
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mg_add_block_data(pblock, (unsigned char *) oref->address, (unsigned long) oref->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   mg_add_block_data(pblock, (unsigned char *) pname->address, (unsigned long) pname->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   mg_add_block_data(pblock, (unsigned char *) data->address, (unsigned long) data->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_CSETP);
+
+   rc = dbx_setproperty((unsigned char *) pblock->buf_addr, NULL);
+
+   mgpw_unpack_result(pblock, presult);
+
+   return rc;
+}
+
+
+MGPW_EXTFUN(int) mg_dbmethod(int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10)
+{
+   int rc;
+   DBXSTR *pblock;
+
+   MGPW_ARG_COUNT(count, 2);
+   data->address[0] = '\0';
+   data->length = 0;
+   MGPW_DB_CONNECTED(gblock, gresult);
+/*
+   if (isc_net_connection == 0) {
+      strcpy(error_message, "ISC methods can only be invoked over network connections");
+      error_message_len = (int) strlen(error_message);
+      return YDB_FAILURE;
+   }
+*/
+   pblock = &gblock;
+   pblock->len_used = 0;
+   mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
+   mg_add_block_data(pblock, (unsigned char *) oref->address, (unsigned long) oref->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
+   mgpw_pack_args(pblock, count - 2, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
+   mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
+   mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_CMETH);
+
+   rc = dbx_method((unsigned char *) pblock->buf_addr, NULL);
 
    mgpw_unpack_result(pblock, data);
 

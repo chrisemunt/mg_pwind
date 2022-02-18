@@ -71,6 +71,9 @@ Version 1.3.11 26 October 2021:
 Version 1.3.12 15 February 2022:
    Modifications to allow access to ISC databases from mg_pwind.
 
+Version 1.3.13 18 February 2022:
+   Correct a SIGSEGV in the dbx_function() call (InterSystems API mode).
+
 */
 
 
@@ -1458,6 +1461,7 @@ DBX_EXTFUN(int) dbx_function(unsigned char *input, unsigned char *output)
       goto dbx_function_exit;
    }
 
+   pmeth->pfun = &fun; /* v1.3.13 */
    rc = mg_function_reference(pmeth, &fun);
    if (rc != CACHE_SUCCESS) {
       mg_error_message(pmeth, rc);
@@ -1509,8 +1513,8 @@ DBX_EXTFUN(int) dbx_function_ex(DBXMETH *pmeth)
       if (rc == CACHE_SUCCESS) {
          isc_pop_value(pcon, &(pmeth->output_val), DBX_DTYPE_DBXSTR);
       }
-   }
 
+   }
    return rc;
 }
 
@@ -4288,7 +4292,6 @@ int mg_function_reference(DBXMETH *pmeth, DBXFUN *pfun)
          if (pcon->dbtype != DBX_DBTYPE_YOTTADB) {
             rc = pcon->p_isc_so->p_CachePushFunc(&(pfun->rflag), (int) pfun->label_len, (const Callin_char_t *) pfun->label, (int) pfun->routine_len, (const Callin_char_t *) pfun->routine);
          }
-
       }
       else {
 

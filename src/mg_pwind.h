@@ -30,7 +30,7 @@
 
 #define MGPW_VERSION_MAJOR       "1"
 #define MGPW_VERSION_MINOR       "3"
-#define MGPW_VERSION_BUILD       "3"
+#define MGPW_VERSION_BUILD       "4"
 
 #define MGPW_VERSION             MGPW_VERSION_MAJOR "." MGPW_VERSION_MINOR "." MGPW_VERSION_BUILD
 
@@ -355,6 +355,10 @@ MGPW_EXTFUN(int)        mg_dbkill                     (int count, ydb_string_t *
 MGPW_EXTFUN(int)        mg_dborder                    (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 MGPW_EXTFUN(int)        mg_dbprevious                 (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 MGPW_EXTFUN(int)        mg_dbfunction                 (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbclassmethod              (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbgetproperty              (int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *pname);
+MGPW_EXTFUN(int)        mg_dbsetproperty              (int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *pname);
+MGPW_EXTFUN(int)        mg_dbmethod                   (int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 
 #if !defined(_WIN32)
 MGPW_EXTFUN(int)        mg_tcp_options                (int count, ydb_string_t *options, ydb_string_t *error);
