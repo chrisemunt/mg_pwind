@@ -3,9 +3,9 @@
 Access to OS libraries (e.g. the cryptography library) from **YottaDB** code.
 
 Chris Munt <cmunt@mgateway.com>  
-18 February 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+1 March 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Current Release: Version: 1.3; Revision 4.
+* Current Release: Version: 1.3; Revision 5.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 Contents
@@ -17,6 +17,7 @@ Contents
 * [Cryptographic functions](#DBCrypto)
 * [Accessing InterSystems databases](#DBISC)
 * [Access to InterSystems classes](#DBClasses)
+* [Access to InterSystems Transactions](#DBTXP)
 * [For the future](#Future)
 * [License](#License)
 
@@ -307,6 +308,18 @@ This is equivalent to:
 
        set nkey=$order(^MyGlobal(""))
 
+### Get next global key record and associated data
+
+       set status=$&pwind.dborderdata(.<nkey>, .<data>, <global>, <key ...>)
+
+Example:
+
+       set status=$&pwind.dborderdata(.nkey,.data,"^MyGlobal", "")
+
+This is equivalent to:
+
+       set data="",nkey=$order(^MyGlobal("")) if nkey'="" set data=$get(^MyGlobal(nkey))
+
 ### Get previous global key record
 
        set status=$&pwind.dbprevious(.<pkey>, <global>, <key ...>)
@@ -319,6 +332,57 @@ This is equivalent to:
 
        set pkey=$order(^MyGlobal(""),-1)
 
+### Get previous global key record and associated data
+
+       set status=$&pwind.dbpreviousdata(.<nkey>, .<data>, <global>, <key ...>)
+
+Example:
+
+       set status=$&pwind.dbpreviousdata(.nkey,.data,"^MyGlobal", "")
+
+This is equivalent to:
+
+       set data="",nkey=$order(^MyGlobal(""),-1) if nkey'="" set data=$get(^MyGlobal(nkey))
+
+### Increment and return the value of a global node
+
+       set status=$&pwind.dbincrement(.<result>, <increment>, <global>, <key ...>)
+
+Example:
+
+       set status=$&pwind.dbincrement(.result,0.5,"^MyGlobal", 1)
+
+This is equivalent to:
+
+       set result=$increment(^MyGlobal(1),0.5)
+
+### Lock a global node
+
+       set status=$&pwind.dblock(.<result>, <timeout>, <global>, <key ...>)
+
+* The time-out value should be specified in seconds.  Set to -1 for no time-out.
+* **result** is set to 1 to indicate success or 0 for time-out.
+
+Example:
+
+       set status=$&pwind.dblock(.result,-1,"^MyGlobal", 1)
+
+This is equivalent to:
+
+       Lock +^MyGlobal(1)
+
+
+### Unlock a global node
+
+       set status=$&pwind.dbunlock(<global>, <key ...>)
+
+Example:
+
+       set status=$&pwind.undblock("^MyGlobal", 1)
+
+This is equivalent to:
+
+       Lock -^MyGlobal(1)
 
 ### Invoke an InterSystems function
 
@@ -409,6 +473,52 @@ Example:
 
        set status=$&pwind.dbmethod(.result,oref,"MyMethod",3)
 
+### Close an instance
+
+       set status=$&pwind.dbcloseinstance(<object_reference>)
+
+Example:
+
+       set status=$&pwind.dbcloseinstance(oref)
+
+
+## <a name="DBTXP"> Access to InterSystems Transactions
+
+### Start a Transaction
+
+       set status=$&pwind.dbtstart()
+
+This is equivalent to:
+
+       TStart
+
+### Return the Transaction Level
+
+       set status=$&pwind.dbtlevel(.<tlevel>)
+
+Example:
+
+       set status=$&pwind.dbtlevel(.tlevel)
+
+This is equivalent to:
+
+       set tlevel=$TLevel
+
+### Commit a Transaction
+
+       set status=$&pwind.dbtcommit()
+
+This is equivalent to:
+
+       TCommit
+
+### Rollback a Transaction
+
+       set status=$&pwind.dbtrollback()
+
+This is equivalent to:
+
+       TRollback
 
 ## <a name="Future"></a> For the future
 
@@ -450,3 +560,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Introduce experimental access to InterSystems classes.
 
+### v1.3.5 (1 March 2022)
+
+* Introduce access to the InterSystems Global Lock command.
+* Introduce access to InterSystems Transactions.
+* Introduce a function to gracefully close InterSystems Object References.
+	* set status=$&pwind.dbclosinstance(oref)
