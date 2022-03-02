@@ -314,10 +314,21 @@ typedef int    xc_status_t;
 #define DBX_CMND_GSET            11
 #define DBX_CMND_GGET            12
 #define DBX_CMND_GNEXT           13
+#define DBX_CMND_GNEXTDATA       131
 #define DBX_CMND_GPREVIOUS       14
+#define DBX_CMND_GPREVIOUSDATA   141
 #define DBX_CMND_GDELETE         15
 #define DBX_CMND_GDEFINED        16
 #define DBX_CMND_GINCREMENT      17
+/* v1.3.13 */
+#define DBX_CMND_GLOCK           18
+#define DBX_CMND_GUNLOCK         19
+#define DBX_CMND_GMERGE          20
+
+#define DBX_CMND_GNNODE          21
+#define DBX_CMND_GNNODEDATA      211
+#define DBX_CMND_GPNODE          22
+#define DBX_CMND_GPNODEDATA      221
 
 #define DBX_CMND_FUNCTION        31
 
@@ -325,6 +336,7 @@ typedef int    xc_status_t;
 #define DBX_CMND_CGETP           42
 #define DBX_CMND_CSETP           43
 #define DBX_CMND_CMETH           44
+#define DBX_CMND_CCLOSE          45
 
 #define DBX_CMND_TSTART          61
 #define DBX_CMND_TLEVEL          62
@@ -1042,6 +1054,7 @@ typedef struct tagDBXMETH {
    short          done;
    short          lock;
    short          increment;
+   short          getdata; /* v1.3.13 */
    int            binary;
    int            argc;
    DBXSTR         input_str;
@@ -1171,8 +1184,10 @@ DBX_EXTFUN(int)         dbx_set_ex                    (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_get                       (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_get_ex                    (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_next                      (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_next_data                 (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_next_ex                   (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_previous                  (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_previous_data             (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_previous_ex               (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_delete                    (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_delete_ex                 (DBXMETH *pmeth);
@@ -1180,6 +1195,10 @@ DBX_EXTFUN(int)         dbx_defined                   (unsigned char *input, uns
 DBX_EXTFUN(int)         dbx_defined_ex                (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_increment                 (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_increment_ex              (DBXMETH *pmeth);
+DBX_EXTFUN(int)         dbx_lock                      (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_lock_ex                   (DBXMETH *pmeth);
+DBX_EXTFUN(int)         dbx_unlock                    (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_unlock_ex                 (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_tstart                    (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_tstart_ex                 (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_tlevel                    (unsigned char *input, unsigned char *output);

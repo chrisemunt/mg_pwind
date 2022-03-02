@@ -30,7 +30,7 @@
 
 #define MGPW_VERSION_MAJOR       "1"
 #define MGPW_VERSION_MINOR       "3"
-#define MGPW_VERSION_BUILD       "4"
+#define MGPW_VERSION_BUILD       "5"
 
 #define MGPW_VERSION             MGPW_VERSION_MAJOR "." MGPW_VERSION_MINOR "." MGPW_VERSION_BUILD
 
@@ -352,13 +352,23 @@ MGPW_EXTFUN(int)        mg_dbclose                    (int count);
 MGPW_EXTFUN(int)        mg_dbget                      (int count, ydb_string_t *out, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 MGPW_EXTFUN(int)        mg_dbset                      (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 MGPW_EXTFUN(int)        mg_dbkill                     (int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
-MGPW_EXTFUN(int)        mg_dborder                    (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
-MGPW_EXTFUN(int)        mg_dbprevious                 (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dborder                    (int count, ydb_string_t *key, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dborderdata                (int count, ydb_string_t *key, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbprevious                 (int count, ydb_string_t *key, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbpreviousdata             (int count, ydb_string_t *key, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbincrement                (int count, ydb_string_t *data, ydb_string_t *increment, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dblock                     (int count, ydb_string_t *result, ydb_string_t *timeout, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbunlock                   (int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbtstart                   (int count);
+MGPW_EXTFUN(int)        mg_dbtlevel                   (int count, ydb_string_t *data);
+MGPW_EXTFUN(int)        mg_dbtcommit                  (int count);
+MGPW_EXTFUN(int)        mg_dbtrollback                (int count);
 MGPW_EXTFUN(int)        mg_dbfunction                 (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 MGPW_EXTFUN(int)        mg_dbclassmethod              (int count, ydb_string_t *data, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 MGPW_EXTFUN(int)        mg_dbgetproperty              (int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *pname);
 MGPW_EXTFUN(int)        mg_dbsetproperty              (int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *pname);
 MGPW_EXTFUN(int)        mg_dbmethod                   (int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
+MGPW_EXTFUN(int)        mg_dbcloseinstance            (int count, ydb_string_t *oref);
 
 #if !defined(_WIN32)
 MGPW_EXTFUN(int)        mg_tcp_options                (int count, ydb_string_t *options, ydb_string_t *error);
@@ -377,6 +387,7 @@ int                     mgpw_crypt_load_library       (MGPWCRYPTSO *p_crypt_so);
 
 int                     mgpw_pack_args                (DBXSTR *pblock, int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 int                     mgpw_unpack_result            (DBXSTR *pblock, ydb_string_t *out);
+int                     mgpw_unpack_result2           (DBXSTR *pblock, ydb_string_t *out1, ydb_string_t *out2);
 
 int                     mgpw_set_size                 (unsigned char *str, unsigned long data_len);
 unsigned long           mgpw_get_size                 (unsigned char *str);
