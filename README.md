@@ -3,9 +3,9 @@
 Access to OS libraries (e.g. the cryptography library) from **YottaDB** code.
 
 Chris Munt <cmunt@mgateway.com>  
-1 March 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+17 March 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Current Release: Version: 1.3; Revision 5.
+* Current Release: Version: 1.3; Revision 6.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 Contents
@@ -15,9 +15,10 @@ Contents
 * [Installing mg\_pwind](#Install)
 * [Invocation of mg\_pwind functions](#DBFunctions)
 * [Cryptographic functions](#DBCrypto)
+* [Wait and Signal functions](#DBSignal)
 * [Accessing InterSystems databases](#DBISC)
-* [Access to InterSystems classes](#DBClasses)
-* [Access to InterSystems Transactions](#DBTXP)
+* [Accessing InterSystems classes](#DBClasses)
+* [Accessing InterSystems Transactions](#DBTXP)
 * [For the future](#Future)
 * [License](#License)
 
@@ -228,12 +229,29 @@ Example:
        write !,"CRC32: ",crc32
 
 
+## <a name="DBSignal"> Wait and Signal functions
+
+Wait for a signal (from another process) or a time-out event:
+
+       set status=$&pwind.signalwait(.<result>,<timeout>)
+
+**timeout** is specified in milliseconds.  When this function returns (as a result of time-out or receiving a wake-up signal from another process), **return** will be set to **0** for time-out, **1** for wake-up signal received and a value of **-1** indicates an error condition.
+
+Send an interrupt signal to another process:
+
+       set status=$&pwind.signal(<process_id>)
+
+**process_id** is the **$Job** value of the process to wake up (i.e. the process blocking on a **pwind.signalwait()** call. 
+
+
 ## <a name="DBISC"> Accessing InterSystems databases
 
 This section describes an experimental approach to accessing data held in InterSystems databases (Cache, Ensemble and IRIS).  Two connectivity modes are supported:
 
 * High-performance in-process access to a local InterSystems database using the Cache/IRIS API.
 * Network based access to a local or remote InterSystems databases via the network.
+
+The functions described in this section will allow YottaDB programs to send updates to, and receive data from, InterSystems databases.  They will also allow YottaDB programs to access the advanced facilities provided by the InterSystems databases and development environments.
 
 ### Opening a connecting to the database
 
@@ -386,8 +404,6 @@ This is equivalent to:
 
 ### Invoke an InterSystems function
 
-* Note: Recommend that functions are accessed over network-based connectivity (for now).
-
        set status=$&pwind.dbfunction(.<result>, <function>, <arguments ...>)
 
 Example:
@@ -413,7 +429,7 @@ This is equivalent to:
        ; close the database connection
        set status=$&pwind.dbclose()
 
-## <a name="DBClasses"> Access to InterSystems classes
+## <a name="DBClasses"> Accessing InterSystems classes
 
 To illustrate these methods, the following simple class will be used:
 
@@ -434,8 +450,6 @@ To illustrate these methods, the following simple class will be used:
        }
 
 ### Invoke a ClassMethod
-
-* Note: Recommend that classes are accessed over network-based connectivity (for now).
 
        set status=$&pwind.dbclassmethod(.<result>, <class_name>, <method_name>, <arguments ...>)
 
@@ -482,7 +496,7 @@ Example:
        set status=$&pwind.dbcloseinstance(oref)
 
 
-## <a name="DBTXP"> Access to InterSystems Transactions
+## <a name="DBTXP"> Accessing InterSystems Transactions
 
 ### Start a Transaction
 
@@ -566,3 +580,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Introduce access to InterSystems Transactions.
 * Introduce a function to gracefully close InterSystems Object References.
 	* set status=$&pwind.dbclosinstance(oref)
+
+### v1.3.6 (17 March 2022)
+
+* Introduce support for long strings through the **mg\_pwind** interface.
+	* Maximum string length for YottaDB: 1,048,576 Bytes.
+	* Maximum string length for InterSystems databases: 3,641,144 Bytes (32,767 Bytes for older systems).
+* Introduce a simple wait/signal mechanism to aid communication between **YottaDB** processes.
