@@ -31,8 +31,8 @@
 
 #define MAJORVERSION             1
 #define MINORVERSION             3
-#define MAINTVERSION             13
-#define BUILDNUMBER              13
+#define MAINTVERSION             14
+#define BUILDNUMBER              14
 
 #define DBX_VERSION_MAJOR        "1"
 #define DBX_VERSION_MINOR        "3"

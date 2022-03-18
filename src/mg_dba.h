@@ -222,6 +222,8 @@ typedef int                ydb_int_t;
 typedef unsigned int       ydb_uint_t;
 typedef long               ydb_long_t;
 typedef unsigned long      ydb_ulong_t;
+typedef float              ydb_float_t;
+typedef double             ydb_double_t;
 typedef char               ydb_char_t;
 typedef int                (*ydb_tpfnptr_t) (void *tpfnparm);  
 
@@ -348,6 +350,10 @@ typedef int    xc_status_t;
 
 #define DBX_LS_MAXSIZE           3641144
 #define DBX_LS_BUFFER            3641145
+
+/* v1.3.14 */
+#define DBX_YDB_MAXSIZE          1048575
+#define DBX_YDB_BUFFER           1048576
 
 #if defined(MAX_PATH) && (MAX_PATH>511)
 #define DBX_MAX_PATH             MAX_PATH
@@ -817,6 +823,7 @@ typedef struct tagDBXCVAL {
 
 typedef struct tagDBXVAL {
    short          type;
+   short          realloc;
    union {
       int            int32;
       long long      int64;
@@ -1180,24 +1187,35 @@ DBX_EXTFUN(int)         dbx_version                   (int index, char *output, 
 DBX_EXTFUN(int)         dbx_open                      (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_close                     (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_set                       (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_set_x                     (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_set_ex                    (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_get                       (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_get_x                     (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_get_ex                    (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_next                      (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_next_x                    (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_next_data                 (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_next_data_x               (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_next_ex                   (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_previous                  (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_previous_x                (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_previous_data             (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_previous_data_x           (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_previous_ex               (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_delete                    (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_delete_x                  (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_delete_ex                 (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_defined                   (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_defined_x                 (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_defined_ex                (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_increment                 (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_increment_x               (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_increment_ex              (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_lock                      (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_lock_x                    (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_lock_ex                   (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_unlock                    (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_unlock_x                  (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_unlock_ex                 (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_tstart                    (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_tstart_ex                 (DBXMETH *pmeth);
@@ -1208,10 +1226,14 @@ DBX_EXTFUN(int)         dbx_tcommit_ex                (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_trollback                 (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_trollback_ex              (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_function                  (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_function_x                (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_function_ex               (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_classmethod               (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_classmethod_x             (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_method                    (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_method_x                  (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_getproperty               (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_getproperty_x             (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_setproperty               (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_closeinstance             (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_getnamespace              (unsigned char *input, unsigned char *output);

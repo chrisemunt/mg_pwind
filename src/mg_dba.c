@@ -77,6 +77,11 @@ Version 1.3.13 1 March 2022:
    Add an interface to gracefully close InterSystems Object References (orefs).
    Add interfaces to get the data as well as the next (or previous) key values.
 
+Version 1.3.14 17 March 2022:
+   Introduce support for long strings through the DB interface.
+   - InterSystems: 3641144 Bytes.
+   - YottaDB: 1048576 Bytes.
+
 */
 
 
@@ -488,7 +493,7 @@ DBX_EXTFUN(int) dbx_close(unsigned char *input, unsigned char *output)
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -580,15 +585,19 @@ dbx_close_tcp:
 
 DBX_EXTFUN(int) dbx_set(unsigned char *input, unsigned char *output)
 {
+   return dbx_set_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_set_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -655,15 +664,19 @@ DBX_EXTFUN(int) dbx_set_ex(DBXMETH *pmeth)
 
 DBX_EXTFUN(int) dbx_get(unsigned char *input, unsigned char *output)
 {
+   return dbx_get_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_get_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -746,15 +759,19 @@ DBX_EXTFUN(int) dbx_get_ex(DBXMETH *pmeth)
 
 DBX_EXTFUN(int) dbx_next(unsigned char *input, unsigned char *output)
 {
+   return dbx_next_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_next_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -805,15 +822,19 @@ dbx_next_exit:
 /* v1.3.13 */
 DBX_EXTFUN(int) dbx_next_data(unsigned char *input, unsigned char *output)
 {
+   return dbx_next_data_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_next_data_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -863,7 +884,7 @@ dbx_next_data_exit:
 
 DBX_EXTFUN(int) dbx_next_ex(DBXMETH *pmeth)
 {
-   int rc, n;
+   int rc;
    DBXCON *pcon = pmeth->pcon;
 
    if (pcon->dbtype == DBX_DBTYPE_YOTTADB) {
@@ -943,15 +964,19 @@ DBX_EXTFUN(int) dbx_next_ex(DBXMETH *pmeth)
 
 DBX_EXTFUN(int) dbx_previous(unsigned char *input, unsigned char *output)
 {
+   return dbx_previous_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_previous_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1001,15 +1026,19 @@ dbx_previous_exit:
 
 DBX_EXTFUN(int) dbx_previous_data(unsigned char *input, unsigned char *output)
 {
+   return dbx_previous_data_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_previous_data_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1138,15 +1167,19 @@ DBX_EXTFUN(int) dbx_previous_ex(DBXMETH *pmeth)
 
 DBX_EXTFUN(int) dbx_delete(unsigned char *input, unsigned char *output)
 {
+   return dbx_delete_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_delete_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1222,15 +1255,19 @@ DBX_EXTFUN(int) dbx_delete_ex(DBXMETH *pmeth)
 
 DBX_EXTFUN(int) dbx_defined(unsigned char *input, unsigned char *output)
 {
+   return dbx_defined_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_defined_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1306,15 +1343,19 @@ DBX_EXTFUN(int) dbx_defined_ex(DBXMETH *pmeth)
 
 DBX_EXTFUN(int) dbx_increment(unsigned char *input, unsigned char *output)
 {
+   return dbx_increment_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_increment_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1389,15 +1430,19 @@ DBX_EXTFUN(int) dbx_increment_ex(DBXMETH *pmeth)
 /* v1.3.13 */
 DBX_EXTFUN(int) dbx_lock(unsigned char *input, unsigned char *output)
 {
+   return dbx_lock_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_lock_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1497,15 +1542,19 @@ DBX_EXTFUN(int) dbx_lock_ex(DBXMETH *pmeth)
 
 DBX_EXTFUN(int) dbx_unlock(unsigned char *input, unsigned char *output)
 {
+   return dbx_unlock_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_unlock_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1592,7 +1641,7 @@ DBX_EXTFUN(int) dbx_tstart(unsigned char *input, unsigned char *output)
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1659,7 +1708,7 @@ DBX_EXTFUN(int) dbx_tlevel(unsigned char *input, unsigned char *output)
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1732,7 +1781,7 @@ DBX_EXTFUN(int) dbx_tcommit(unsigned char *input, unsigned char *output)
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1805,7 +1854,7 @@ DBX_EXTFUN(int) dbx_trollback(unsigned char *input, unsigned char *output)
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1870,16 +1919,20 @@ DBX_EXTFUN(int) dbx_trollback_ex(DBXMETH *pmeth)
 
 DBX_EXTFUN(int) dbx_function(unsigned char *input, unsigned char *output)
 {
+   return dbx_function_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_function_x(DBXMETH *pmeth)
+{
    int rc;
    DBXFUN fun;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -1953,15 +2006,19 @@ DBX_EXTFUN(int) dbx_function_ex(DBXMETH *pmeth)
 
 DBX_EXTFUN(int) dbx_classmethod(unsigned char *input, unsigned char *output)
 {
+   return dbx_classmethod_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_classmethod_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -2005,15 +2062,19 @@ dbx_classmethod_exit:
 
 DBX_EXTFUN(int) dbx_method(unsigned char *input, unsigned char *output)
 {
+   return dbx_method_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_method_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -2057,15 +2118,19 @@ dbx_method_exit:
 
 DBX_EXTFUN(int) dbx_getproperty(unsigned char *input, unsigned char *output)
 {
+   return dbx_getproperty_x(mg_unpack_header(input, output));
+}
+
+
+DBX_EXTFUN(int) dbx_getproperty_x(DBXMETH *pmeth)
+{
    int rc;
-   DBXMETH *pmeth;
    DBXCON *pcon;
 
-   pmeth = mg_unpack_header(input, output);
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -2117,7 +2182,7 @@ DBX_EXTFUN(int) dbx_setproperty(unsigned char *input, unsigned char *output)
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -2170,7 +2235,7 @@ DBX_EXTFUN(int) dbx_closeinstance(unsigned char *input, unsigned char *output)
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -2219,7 +2284,7 @@ DBX_EXTFUN(int) dbx_getnamespace(unsigned char *input, unsigned char *output)
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -2293,7 +2358,7 @@ DBX_EXTFUN(int) dbx_setnamespace(unsigned char *input, unsigned char *output)
    pcon = pmeth->pcon;
 
    if (!pcon || !pcon->connected) {
-      mg_set_error_message_ex(output ? output : input, "No Database Connection");
+      mg_set_error_message_ex(pmeth->output_val.svalue.buf_addr, "No Database Connection");
       return 1;
    }
 
@@ -3204,22 +3269,34 @@ int isc_pop_value(DBXCON *pcon, DBXVAL *value, int required_type)
       rc = pcon->p_isc_so->p_CachePopStr((int *) &len, (Callin_char_t **) &outstr8);
    }
 
-
    max = 0;
    if (value->svalue.len_alloc > 8) {
-      max = (value->svalue.len_alloc - 2);
+      max = (value->svalue.len_alloc - 7); /* 5 Byte header plus 2 spare */
    }
 
    pstr8 = (char *) value->svalue.buf_addr;
    offset = value->offset;
    if (len >= max) {
-      p8 = (char *) mg_malloc(sizeof(char) * (len + 2), 301);
-      if (p8) {
-         if (value->svalue.buf_addr)
-            mg_free((void *) value->svalue.buf_addr, 301);
-         value->svalue.buf_addr = (unsigned char *) p8;
-         pstr8 = (char *) value->svalue.buf_addr;
-         max = len;
+      if (value->realloc) { /* v1.3.14 */
+         p8 = (char *) mg_malloc(sizeof(char) * (len + 7), 301);
+         if (p8) {
+            if (value->svalue.buf_addr && value->realloc == 2) {
+               mg_free((void *) value->svalue.buf_addr, 301);
+            }
+            value->realloc = 2; /* subsequent reallocs can free the original */
+            value->svalue.buf_addr = (unsigned char *) p8;
+            value->svalue.len_alloc = (len + 7);
+            pstr8 = (char *) value->svalue.buf_addr;
+            max = len;
+         }
+         else {
+            rc = CACHE_FAILURE;
+            len = 0;
+         }
+      }
+      else {
+         rc = CACHE_STRTOOLONG;
+         len = 0;
       }
    }
    for (n = 0; n < len; n ++) {
@@ -4439,7 +4516,7 @@ DBXMETH * mg_unpack_header(unsigned char *input, unsigned char *output)
    else {
       pmeth->output_val.svalue.buf_addr = (char *) input;
    }
-
+   pmeth->output_val.realloc = 0; /* v1.3.14 */
    pmeth->output_val.svalue.len_alloc = output_bsize;
 /*
    memset((void *) pmeth->output_val.svalue.buf_addr, 0, 5);
@@ -4468,6 +4545,7 @@ int mg_unpack_arguments(DBXMETH *pmeth)
       }
 
       pmeth->args[pmeth->argc].type = dtype;
+      pmeth->args[pmeth->argc].realloc = 0;
       pmeth->args[pmeth->argc].svalue.len_used = len;
       pmeth->args[pmeth->argc].svalue.buf_addr = (char *) (pmeth->input_str.buf_addr + pmeth->offset);
       pmeth->offset += len;
@@ -4502,6 +4580,7 @@ int mg_global_reference(DBXMETH *pmeth)
       p = (char *) (pmeth->input_str.buf_addr + pmeth->offset);
 
       pmeth->args[pmeth->argc].type = dtype;
+      pmeth->args[pmeth->argc].realloc = 0;
       pmeth->args[pmeth->argc].svalue.len_used = len;
       pmeth->args[pmeth->argc].svalue.len_alloc = len;
       pmeth->args[pmeth->argc].svalue.buf_addr = (char *) (pmeth->input_str.buf_addr + pmeth->offset);
@@ -4607,6 +4686,7 @@ int mg_class_reference(DBXMETH *pmeth, short context)
       p = (char *) (pmeth->input_str.buf_addr + pmeth->offset);
 
       pmeth->args[pmeth->argc].type = dtype;
+      pmeth->args[pmeth->argc].realloc = 0;
       pmeth->args[pmeth->argc].svalue.len_used = len;
       pmeth->args[pmeth->argc].svalue.len_alloc = len;
       pmeth->args[pmeth->argc].svalue.buf_addr = (char *) (pmeth->input_str.buf_addr + pmeth->offset);
@@ -4712,6 +4792,7 @@ int mg_function_reference(DBXMETH *pmeth, DBXFUN *pfun)
       p = (char *) (pmeth->input_str.buf_addr + pmeth->offset);
 
       pmeth->args[pmeth->argc].type = dtype;
+      pmeth->args[pmeth->argc].realloc = 0;
       pmeth->args[pmeth->argc].svalue.len_used = len;
       pmeth->args[pmeth->argc].svalue.len_alloc = len;
       pmeth->args[pmeth->argc].svalue.buf_addr = (char *) (pmeth->input_str.buf_addr + pmeth->offset);
@@ -4805,8 +4886,26 @@ int mg_add_block_head_size(DBXSTR *block, unsigned long data_len, int cmnd)
 
 int mg_add_block_data(DBXSTR *block, unsigned char *data, unsigned long data_len, int dsort, int dtype)
 {
-   if (data_len == 0) {
-      data_len = (unsigned long) data_len;
+   int alloc;
+   char *p8;
+
+   if (data_len == 0 && data) { /* v1.3.14 */
+      data_len = (unsigned long) strlen(data);
+   }
+
+   /* v1.3.14 */
+   if ((block->len_used + data_len + 5) >= block->len_alloc) {
+      alloc = (block->len_used + data_len + 256);
+      p8 = (char *) mg_malloc(alloc * sizeof(char), 0);
+      if (p8) {
+         memcpy((void *) p8, (void *) block->buf_addr, (size_t) block->len_used);
+         mg_free((void *) block->buf_addr, 0);
+         block->buf_addr = p8;
+         block->len_alloc = alloc;
+      }
+      else {
+         return 0;
+      }
    }
 
    mg_add_block_size(block, (unsigned long) block->len_used, data_len, dsort, dtype);
@@ -4918,8 +5017,9 @@ int mg_buf_free(MGBUF *p_buf)
    if (!p_buf)
       return 0;
 
-   if (p_buf->p_buffer)
+   if (p_buf->p_buffer) {
       mg_free((void *) p_buf->p_buffer, 0);
+   }
 
    p_buf->p_buffer = NULL;
    p_buf->size = 0;
@@ -6363,9 +6463,11 @@ dbx1 ; test
 
 int netx_tcp_command(DBXMETH *pmeth, int context)
 {
-   int len;
+   int rc, len, max;
+   char *p8;
    DBXCON *pcon = pmeth->pcon;
 
+   rc = CACHE_SUCCESS;
    if (pcon->p_srv) {
       return mg_db_command(pmeth, context);
    }
@@ -6376,13 +6478,54 @@ int netx_tcp_command(DBXMETH *pmeth, int context)
 
    len = mg_get_size((unsigned char *) pmeth->output_val.svalue.buf_addr);
 
+   /* v1.3.14 */
+   if (pmeth->output_val.svalue.len_alloc > 8) {
+      max = (pmeth->output_val.svalue.len_alloc - 7); /* 5 Byte header plus 2 spare */
+   }
+
+   if (len >= max) {
+      if (pmeth->output_val.realloc) { /* v1.3.14 */
+         p8 = (char *) mg_malloc(sizeof(char) * (len + 7), 301);
+         if (p8) {
+            memcpy((void *) p8, (void *) pmeth->output_val.svalue.buf_addr, 5);
+            if (pmeth->output_val.svalue.buf_addr && pmeth->output_val.realloc == 2) {
+               mg_free((void *) pmeth->output_val.svalue.buf_addr, 301);
+            }
+            pmeth->output_val.realloc = 2; /* subsequent reallocs can free the original */
+            pmeth->output_val.svalue.buf_addr = (unsigned char *) p8;
+            pmeth->output_val.svalue.len_alloc = (len + 7);
+         }
+         else {
+            rc = CACHE_FAILURE;
+         }
+      }
+      else {
+         rc = CACHE_STRTOOLONG;
+      }
+   }
+
+   if (rc != CACHE_SUCCESS && len > 0) { /* v1.3.14 */
+      unsigned int total, get;
+
+      total = 0;
+      while (total < (unsigned int) len) {
+         get = (len - total);
+         if (get > (pmeth->output_val.svalue.len_alloc - 5))
+            get = (pmeth->output_val.svalue.len_alloc - 5);
+         netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr + 5, get, pcon->timeout, 1); /* v1.2.8 */
+         total += get;
+      }
+      len = 0;
+      mg_add_block_size(&(pmeth->output_val.svalue), 0, (unsigned long) len, DBX_DSORT_DATA, DBX_DTYPE_DBXSTR);
+   }
+
    if (len > 0) {
       netx_tcp_read(pcon, (unsigned char *) pmeth->output_val.svalue.buf_addr + 5, len, pcon->timeout, 1); /* v1.2.8 */
    }
 
    pmeth->output_val.svalue.len_used = len;
 
-   return 0;
+   return rc;
 }
 
 
@@ -8008,6 +8151,7 @@ int mg_bind_server_api(MGSRV *p_srv, short context)
       pmeth->output_val.svalue.buf_addr[0] = '\0';
       pmeth->output_val.svalue.len_alloc = DBX_BUFFER;
       pmeth->output_val.svalue.len_used = 0;
+      pmeth->output_val.realloc = 2;
    }
 
    pcon = p_srv->pcon[chndle];

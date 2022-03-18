@@ -45,6 +45,13 @@ Version 1.3.5 1 March 2022:
    Add an interface to gracefully close InterSystems Object References (orefs).
    Add interfaces to get the data as well as the next (or previous) key values for InterSystems databases.
 
+Version 1.3.6 17 March 2022:
+   Introduce support for long strings through the mg_pwind interface.
+	- Maximum string length for YottaDB: 1,048,576 Bytes.
+	- Maximum string length for InterSystems databases: 3,641,144 Bytes (32,767 Bytes for older systems).
+   Introduce a simple wait/signal mechanism to aid communication between YottaDB processes.
+   - pwind.signalwait() and pwind.signal().
+
 */
 
 #include "mg_pwind.h"
@@ -67,6 +74,7 @@ static int           error_message_len    = 0;
 static int           error_code           = 0;
 static DBXSTR        gblock               = {0, 0, NULL};
 static ydb_string_t  gresult              = {0, NULL};
+static unsigned long gresult_size         = 256;
 static int           isc_net_connection   = 0;
 
 MGPW_MALLOC          mgpw_ext_malloc      = NULL;
@@ -80,6 +88,8 @@ pthread_mutex_t      mgpw_global_mutex    = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t      mgpw_cond_mutex      = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t       mgpw_cond            = PTHREAD_COND_INITIALIZER;
 static int           mgpw_cond_flag       = 0;
+static int           mgpw_pipe_status     = 0;
+static int           mgpw_pipefd[2]       = {0, 0};
 #endif
 
 
@@ -459,6 +469,157 @@ MGPW_EXTFUN(int) mg_crc32(int count, ydb_string_t *in, ydb_uint_t *out)
 }
 
 
+/* v1.3.6 */
+void mg_signalwait_handler(int sig)
+{
+#if !defined(_WIN32)
+   int rc, errno_orig;
+
+   if (mgpw_pipe_status) {
+      errno_orig = errno;
+      rc = write(mgpw_pipefd[1], "x", 1);
+      errno = errno_orig;
+   }
+   return;
+#else
+   return;
+#endif
+}
+
+
+MGPW_EXTFUN(int) mg_signalwait(int count, ydb_uint_t *result, ydb_int_t timeout)
+{
+#if !defined(_WIN32)
+   int rc, ready, nfds, flags;
+   struct timeval to, *pto;
+   fd_set read_set;
+   struct sigaction sa, oldusr1;
+   char ch;
+   int fd, j;
+
+   /* The classic self-pipe trick */
+
+   *result = 1;
+   nfds = 0;
+   pto = NULL;
+   if (timeout != -1) {
+      to.tv_sec = 0;
+      to.tv_usec = (timeout * 1000);
+      pto = &to;
+   }
+
+
+   if (mgpw_pipe_status == 0) {
+      rc = pipe(mgpw_pipefd);
+      if (rc == -1) {
+         *result = -1;
+         return YDB_OK;
+      }
+      flags = fcntl(mgpw_pipefd[0], F_GETFL);
+      if (flags == -1) {
+         *result = -1;
+         return YDB_OK;
+      }
+      flags |= O_NONBLOCK;
+      if (fcntl(mgpw_pipefd[0], F_SETFL, flags) == -1) {
+         *result = -1;
+         return YDB_OK;
+      }
+
+      flags = fcntl(mgpw_pipefd[1], F_GETFL);
+      if (flags == -1) {
+         *result = -1;
+         return YDB_OK;
+      }
+      flags |= O_NONBLOCK;
+      if (fcntl(mgpw_pipefd[1], F_SETFL, flags) == -1) {
+         *result = -1;
+         return YDB_OK;
+      }
+      mgpw_pipe_status = 1;
+   }
+
+   FD_ZERO(&read_set);
+   FD_SET(mgpw_pipefd[0], &read_set);
+   nfds = mgpw_pipefd[0] + 1;
+
+   sigemptyset(&sa.sa_mask);
+   sa.sa_flags = SA_RESTART;
+   sa.sa_handler = mg_signalwait_handler;
+/*
+   if (sigaction(SIGINT, &sa, NULL) == -1) {
+      *result = -1;
+      return YDB_OK;
+   }
+*/
+   sigaction(SIGUSR1, NULL, &oldusr1);
+
+   if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+      sigaction(SIGUSR1, &oldusr1, NULL);
+      *result = -1;
+      return YDB_OK;
+   }
+/*
+   if (sigaction(SIGUSR2, &sa, NULL) == -1) {
+      *result = -1;
+      return YDB_OK;
+   }
+*/
+
+   rc = read(mgpw_pipefd[0], &ch, 1);
+   if (rc == 1 && ch == 'x') {
+      return YDB_OK;
+   }
+
+   while (1) {
+      rc = select(nfds, &read_set, NULL, NULL, pto);
+      if (rc == -1 && errno == EINTR)  {
+         continue;
+      }
+      if (rc == -1) {
+         *result = -1;
+         break;
+      }
+      if (rc == 0) {
+         *result = 0;
+         break;
+      }
+      if (FD_ISSET(mgpw_pipefd[0], &read_set)) {
+         rc = read(mgpw_pipefd[0], &ch, 1);
+         break;
+      }
+   }
+/*
+   while (1) {
+      rc = read(mgpw_pipefd[0], &ch, 1);
+      if (rc == -1 && errno == EAGAIN) {
+         break;
+      }
+   }
+*/
+   sigaction(SIGUSR1, &oldusr1, NULL);
+
+   return YDB_OK;
+#else
+   return YDB_OK;
+#endif
+}
+
+
+MGPW_EXTFUN(int) mg_signal(int count, ydb_ulong_t pid)
+{
+#if !defined(_WIN32)
+   int rc;
+
+   rc = kill((pid_t) pid, SIGUSR1);
+
+   return YDB_OK;
+#else
+   return YDB_OK;
+#endif
+}
+
+
 /* v1.3.3 */
 MGPW_EXTFUN(int) mg_dbopen(int count, ydb_string_t *dbtype, ydb_string_t *path, ydb_string_t *host, ydb_string_t *port, ydb_string_t *username, ydb_string_t *password, ydb_string_t *nspace, ydb_string_t *parameters)
 {
@@ -472,25 +633,25 @@ MGPW_EXTFUN(int) mg_dbopen(int count, ydb_string_t *dbtype, ydb_string_t *path, 
    MGPW_ARG_COUNT(count, 7);
 
    if (!gblock.buf_addr) {
-      gblock.buf_addr = (char *) malloc(DBX_BUFFER);
+      gblock.buf_addr = (char *) malloc(DBX_YDB_BUFFER + 10);
       if (!gblock.buf_addr) {
          return YDB_FAILURE;
       }
-      gblock.len_alloc = DBX_BUFFER;
+      gblock.len_alloc = (DBX_YDB_BUFFER + 10);
       gblock.len_used = 0;
    }
    if (!gresult.address) {
-      gresult.address = (char *) malloc(DBX_BUFFER);
+      gresult.address = (char *) malloc(gresult_size);
       if (!gresult.address) {
          return YDB_FAILURE;
       }
-      gresult.length = 0;
+      gresult.length = gresult_size;
    }
 
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
 
    dbx_init();
 
@@ -531,13 +692,12 @@ MGPW_EXTFUN(int) mg_dbopen(int count, ydb_string_t *dbtype, ydb_string_t *path, 
 #endif
 
    rc = dbx_open((unsigned char *) pblock->buf_addr, NULL);
-memcpy(error_message, pblock->buf_addr, pblock->len_used);
-error_message_len = pblock->len_used;
+   memcpy(error_message, pblock->buf_addr, pblock->len_used);
+   error_message_len = pblock->len_used;
 
 #if !defined(_WIN32)
    sigaction(SIGALRM, &oldact, NULL);
 #endif
-
    rc = mgpw_unpack_result(pblock, presult);
 
    return rc;
@@ -556,7 +716,7 @@ MGPW_EXTFUN(int) mg_dbclose(int count)
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
 
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
@@ -574,12 +734,10 @@ MGPW_EXTFUN(int) mg_dbget(int count, ydb_string_t *data, ydb_string_t *k1, ydb_s
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 2);
-   data->address[0] = '\0';
-   data->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
-
    pblock = &gblock;
    pblock->len_used = 0;
 
@@ -588,9 +746,14 @@ MGPW_EXTFUN(int) mg_dbget(int count, ydb_string_t *data, ydb_string_t *k1, ydb_s
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GGET);
 
-   rc = dbx_get((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_get_x(pmeth);
 
-   rc = mgpw_unpack_result(pblock, data);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), data);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -600,6 +763,7 @@ MGPW_EXTFUN(int) mg_dbset(int count, ydb_string_t *data, ydb_string_t *k1, ydb_s
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
    ydb_string_t *presult;
 
    MGPW_ARG_COUNT(count, 2);
@@ -608,7 +772,7 @@ MGPW_EXTFUN(int) mg_dbset(int count, ydb_string_t *data, ydb_string_t *k1, ydb_s
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
 
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mgpw_pack_args(pblock, count - 1, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
@@ -616,9 +780,14 @@ MGPW_EXTFUN(int) mg_dbset(int count, ydb_string_t *data, ydb_string_t *k1, ydb_s
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GSET);
 
-   rc = dbx_set((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_set_x(pmeth);
 
-   mgpw_unpack_result(pblock, presult);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), presult);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -628,6 +797,7 @@ MGPW_EXTFUN(int) mg_dbkill(int count, ydb_string_t *k1, ydb_string_t *k2, ydb_st
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
    ydb_string_t *presult;
 
    MGPW_ARG_COUNT(count, 1);
@@ -636,16 +806,21 @@ MGPW_EXTFUN(int) mg_dbkill(int count, ydb_string_t *k1, ydb_string_t *k2, ydb_st
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
 
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mgpw_pack_args(pblock, count, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GDELETE);
 
-   rc = dbx_delete((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_delete_x(pmeth);
 
-   mgpw_unpack_result(pblock, presult);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), presult);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -655,10 +830,9 @@ MGPW_EXTFUN(int) mg_dborder(int count, ydb_string_t *key, ydb_string_t *k1, ydb_
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 3);
-   key->address[0] = '\0';
-   key->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
 
    pblock = &gblock;
@@ -668,9 +842,14 @@ MGPW_EXTFUN(int) mg_dborder(int count, ydb_string_t *key, ydb_string_t *k1, ydb_
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GNEXT);
 
-   rc = dbx_next((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_next_x(pmeth);
 
-   mgpw_unpack_result(pblock, key);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), key);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -680,12 +859,9 @@ MGPW_EXTFUN(int) mg_dborderdata(int count, ydb_string_t *key, ydb_string_t *data
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 3);
-   key->address[0] = '\0';
-   key->length = 0;
-   data->address[0] = '\0';
-   data->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
 
    pblock = &gblock;
@@ -695,21 +871,18 @@ MGPW_EXTFUN(int) mg_dborderdata(int count, ydb_string_t *key, ydb_string_t *data
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GNEXTDATA);
 
-   rc = dbx_next_data((unsigned char *) pblock->buf_addr, NULL);
-/*
-printf("\r\npblock->buf_addr len %d", pblock->len_used);
-printf("\r\npblock->buf_addr %s", pblock->buf_addr);
-{
-   int n;
-   for (n = 0; n < pblock->len_used; n ++) {
-      printf("\r\npblock->buf_addr %d %d", n, (unsigned char) pblock->buf_addr[n]);
-   }
-}
-*/
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_next_data_x(pmeth);
+
    if (isc_net_connection)
-      mgpw_unpack_result2(pblock, key, data);
+      rc = mgpw_unpack_result2(&(pmeth->output_val.svalue), key, data);
    else
-      mgpw_unpack_result2(pblock, data, key);
+      rc = mgpw_unpack_result2(&(pmeth->output_val.svalue), data, key);
+
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -719,10 +892,9 @@ MGPW_EXTFUN(int) mg_dbprevious(int count, ydb_string_t *key, ydb_string_t *k1, y
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 3);
-   key->address[0] = '\0';
-   key->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
 
    pblock = &gblock;
@@ -732,9 +904,14 @@ MGPW_EXTFUN(int) mg_dbprevious(int count, ydb_string_t *key, ydb_string_t *k1, y
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GPREVIOUS);
 
-   rc = dbx_previous((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_previous_x(pmeth);
 
-   mgpw_unpack_result(pblock, key);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), key);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -744,12 +921,9 @@ MGPW_EXTFUN(int) mg_dbpreviousdata(int count, ydb_string_t *key, ydb_string_t *d
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 3);
-   key->address[0] = '\0';
-   key->length = 0;
-   data->address[0] = '\0';
-   data->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
 
    pblock = &gblock;
@@ -759,12 +933,18 @@ MGPW_EXTFUN(int) mg_dbpreviousdata(int count, ydb_string_t *key, ydb_string_t *d
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GPREVIOUSDATA);
 
-   rc = dbx_previous_data((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_previous_data_x(pmeth);
 
    if (isc_net_connection)
-      mgpw_unpack_result2(pblock, key, data);
+      rc = mgpw_unpack_result2(&(pmeth->output_val.svalue), key, data);
    else
-      mgpw_unpack_result2(pblock, data, key);
+      rc = mgpw_unpack_result2(&(pmeth->output_val.svalue), data, key);
+
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -774,10 +954,9 @@ MGPW_EXTFUN(int) mg_dbincrement(int count, ydb_string_t *data, ydb_string_t *inc
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 3);
-   data->address[0] = '\0';
-   data->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
 
    pblock = &gblock;
@@ -788,9 +967,14 @@ MGPW_EXTFUN(int) mg_dbincrement(int count, ydb_string_t *data, ydb_string_t *inc
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GINCREMENT);
 
-   rc = dbx_increment((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_increment_x(pmeth);
 
-   mgpw_unpack_result(pblock, data);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), data);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -800,6 +984,7 @@ MGPW_EXTFUN(int) mg_dblock(int count, ydb_string_t *result, ydb_string_t *timeou
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 3);
    MGPW_DB_CONNECTED(gblock, gresult);
@@ -813,9 +998,14 @@ MGPW_EXTFUN(int) mg_dblock(int count, ydb_string_t *result, ydb_string_t *timeou
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GLOCK);
 
-   rc = dbx_lock((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_lock_x(pmeth);
 
-   mgpw_unpack_result(pblock, result);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), result);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -825,6 +1015,7 @@ MGPW_EXTFUN(int) mg_dbunlock(int count, ydb_string_t *k1, ydb_string_t *k2, ydb_
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
    ydb_string_t *presult;
 
    MGPW_ARG_COUNT(count, 1);
@@ -833,16 +1024,21 @@ MGPW_EXTFUN(int) mg_dbunlock(int count, ydb_string_t *k1, ydb_string_t *k2, ydb_
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
 
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mgpw_pack_args(pblock, count, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_GUNLOCK);
 
-   rc = dbx_unlock((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_unlock_x(pmeth);
 
-   mgpw_unpack_result(pblock, presult);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), presult);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -860,7 +1056,7 @@ MGPW_EXTFUN(int) mg_dbtstart(int count)
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
 
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
@@ -909,7 +1105,7 @@ MGPW_EXTFUN(int) mg_dbtcommit(int count)
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
 
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
@@ -935,7 +1131,7 @@ MGPW_EXTFUN(int) mg_dbtrollback(int count)
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
 
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
@@ -953,11 +1149,11 @@ MGPW_EXTFUN(int) mg_dbfunction(int count, ydb_string_t *data, ydb_string_t *k1, 
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 2);
-   data->address[0] = '\0';
-   data->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
+
 /*
    if (isc_net_connection == 0) {
       strcpy(error_message, "ISC functions can only be invoked over network connections");
@@ -972,9 +1168,14 @@ MGPW_EXTFUN(int) mg_dbfunction(int count, ydb_string_t *data, ydb_string_t *k1, 
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_FUNCTION);
 
-   rc = dbx_function((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_function_x(pmeth);
 
-   mgpw_unpack_result(pblock, data);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), data);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -984,10 +1185,9 @@ MGPW_EXTFUN(int) mg_dbclassmethod(int count, ydb_string_t *data, ydb_string_t *k
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 2);
-   data->address[0] = '\0';
-   data->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
 /*
    if (isc_net_connection == 0) {
@@ -1003,9 +1203,14 @@ MGPW_EXTFUN(int) mg_dbclassmethod(int count, ydb_string_t *data, ydb_string_t *k
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_CCMETH);
 
-   rc = dbx_classmethod((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_classmethod_x(pmeth);
 
-   mgpw_unpack_result(pblock, data);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), data);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -1015,10 +1220,9 @@ MGPW_EXTFUN(int) mg_dbgetproperty(int count, ydb_string_t *data, ydb_string_t *o
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 2);
-   data->address[0] = '\0';
-   data->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
 /*
    if (isc_net_connection == 0) {
@@ -1035,9 +1239,14 @@ MGPW_EXTFUN(int) mg_dbgetproperty(int count, ydb_string_t *data, ydb_string_t *o
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_CGETP);
 
-   rc = dbx_getproperty((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_getproperty_x(pmeth);
 
-   mgpw_unpack_result(pblock, data);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), data);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -1061,7 +1270,7 @@ MGPW_EXTFUN(int) mg_dbsetproperty(int count, ydb_string_t *data, ydb_string_t *o
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mg_add_block_data(pblock, (unsigned char *) oref->address, (unsigned long) oref->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
    mg_add_block_data(pblock, (unsigned char *) pname->address, (unsigned long) pname->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
@@ -1081,10 +1290,9 @@ MGPW_EXTFUN(int) mg_dbmethod(int count, ydb_string_t *data, ydb_string_t *oref, 
 {
    int rc;
    DBXSTR *pblock;
+   DBXMETH *pmeth;
 
    MGPW_ARG_COUNT(count, 2);
-   data->address[0] = '\0';
-   data->length = 0;
    MGPW_DB_CONNECTED(gblock, gresult);
 /*
    if (isc_net_connection == 0) {
@@ -1101,9 +1309,14 @@ MGPW_EXTFUN(int) mg_dbmethod(int count, ydb_string_t *data, ydb_string_t *oref, 
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
    mg_add_block_head_size(pblock, pblock->len_used, DBX_CMND_CMETH);
 
-   rc = dbx_method((unsigned char *) pblock->buf_addr, NULL);
+   pmeth = mg_unpack_header((unsigned char *) pblock->buf_addr, NULL);
+   pmeth->output_val.realloc = 1;
+   rc = dbx_method_x(pmeth);
 
-   mgpw_unpack_result(pblock, data);
+   rc = mgpw_unpack_result(&(pmeth->output_val.svalue), data);
+   if (pmeth->output_val.svalue.buf_addr != pblock->buf_addr) {
+      mg_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+   }
 
    return rc;
 }
@@ -1127,7 +1340,7 @@ MGPW_EXTFUN(int) mg_dbcloseinstance(int count,ydb_string_t *oref)
    pblock = &gblock;
    pblock->len_used = 0;
    presult = &gresult;
-   presult->length = 0;
+   presult->length = gresult_size;
    mg_add_block_head(pblock, (unsigned long) pblock->len_alloc, (unsigned long) 0);
    mg_add_block_data(pblock, (unsigned char *) oref->address, (unsigned long) oref->length, DBX_DSORT_DATA, DBX_DTYPE_STR);
    mg_add_block_data(pblock, (unsigned char *) "", (unsigned long) 0, DBX_DSORT_EOD, DBX_DTYPE_STR);
@@ -1540,9 +1753,17 @@ int mgpw_unpack_result(DBXSTR *pblock, ydb_string_t *out)
       rc = YDB_FAILURE;
    }
    else {
-      memcpy((void *) out->address, (void *) (pblock->buf_addr + 5), (size_t) data_len);
-      out->length = data_len;
-      rc = YDB_OK;
+      if (data_len > out->length) {
+         sprintf(error_message, "Maximum string length (%lu Bytes) exceeded", out->length);
+         error_message_len = (int) strlen(error_message);
+         out->length = 0;
+         rc = YDB_FAILURE;
+      }
+      else {
+         memcpy((void *) out->address, (void *) (pblock->buf_addr + 5), (size_t) data_len);
+         out->length = data_len;
+         rc = YDB_OK;
+      }
    }
 
    return rc;
@@ -1554,6 +1775,7 @@ int mgpw_unpack_result2(DBXSTR *pblock, ydb_string_t *out1, ydb_string_t *out2)
    int rc, dsort, dtype;
    unsigned long data_len, offset;
 
+   rc = YDB_OK;
    data_len = mg_get_block_size(pblock, 0, &dsort, &dtype);
    if (dsort == DBX_DSORT_ERROR) {
       memcpy((void *) error_message, (void *) (pblock->buf_addr + 5), (size_t) data_len);
@@ -1566,14 +1788,36 @@ int mgpw_unpack_result2(DBXSTR *pblock, ydb_string_t *out1, ydb_string_t *out2)
       offset = 5;
       data_len = mg_get_block_size(pblock, offset, &dsort, &dtype);
       offset += 5;
-      memcpy((void *) out1->address, (void *) (pblock->buf_addr + offset), (size_t) data_len);
-      out1->length = data_len;
-      offset += data_len;
-      data_len = mg_get_block_size(pblock, offset, &dsort, &dtype);
-      offset += 5;
-      memcpy((void *) out2->address, (void *) (pblock->buf_addr + offset), (size_t) data_len);
-      out2->length = data_len;
-      rc = YDB_OK;
+      if (data_len > out1->length) {
+         sprintf(error_message, "Maximum string length (%lu Bytes) exceeded", out1->length);
+         error_message_len = (int) strlen(error_message);
+         out1->length = 0;
+         rc = YDB_FAILURE;
+      }
+      else {
+         memcpy((void *) out1->address, (void *) (pblock->buf_addr + offset), (size_t) data_len);
+         out1->length = data_len;
+         rc = YDB_OK;
+      }
+      if (rc == YDB_OK) {
+         offset += data_len;
+         data_len = mg_get_block_size(pblock, offset, &dsort, &dtype);
+         offset += 5;
+         if (data_len > out2->length) {
+            sprintf(error_message, "Maximum string length (%lu Bytes) exceeded", out2->length);
+            error_message_len = (int) strlen(error_message);
+            out2->length = 0;
+            rc = YDB_FAILURE;
+         }
+         else {
+            memcpy((void *) out2->address, (void *) (pblock->buf_addr + offset), (size_t) data_len);
+            out2->length = data_len;
+            rc = YDB_OK;
+         }
+      }
+      else {
+         out2->length = 0;
+      }
    }
 
    return rc;

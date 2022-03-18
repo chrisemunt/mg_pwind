@@ -30,7 +30,7 @@
 
 #define MGPW_VERSION_MAJOR       "1"
 #define MGPW_VERSION_MINOR       "3"
-#define MGPW_VERSION_BUILD       "5"
+#define MGPW_VERSION_BUILD       "6"
 
 #define MGPW_VERSION             MGPW_VERSION_MAJOR "." MGPW_VERSION_MINOR "." MGPW_VERSION_BUILD
 
@@ -346,6 +346,10 @@ MGPW_EXTFUN(int)        mg_hmac_md5                   (int count, ydb_string_t *
 MGPW_EXTFUN(int)        mg_encode_b64                 (int count, ydb_string_t *in, ydb_string_t *out);
 MGPW_EXTFUN(int)        mg_decode_b64                 (int count, ydb_string_t *in, ydb_string_t *out);
 MGPW_EXTFUN(int)        mg_crc32                      (int count, ydb_string_t *in, ydb_uint_t *out);
+
+void                    mg_signalwait_handler         (int sig);
+MGPW_EXTFUN(int)        mg_signalwait                 (int count, ydb_uint_t *result, ydb_int_t timeout);
+MGPW_EXTFUN(int)        mg_signal                     (int count, ydb_ulong_t pid);
 
 MGPW_EXTFUN(int)        mg_dbopen                     (int count, ydb_string_t *dbtype, ydb_string_t *path, ydb_string_t *host, ydb_string_t *port, ydb_string_t *username, ydb_string_t *password, ydb_string_t *nspace, ydb_string_t *parameters);
 MGPW_EXTFUN(int)        mg_dbclose                    (int count);
