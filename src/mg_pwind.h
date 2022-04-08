@@ -30,7 +30,7 @@
 
 #define MGPW_VERSION_MAJOR       "1"
 #define MGPW_VERSION_MINOR       "3"
-#define MGPW_VERSION_BUILD       "6"
+#define MGPW_VERSION_BUILD       "7"
 
 #define MGPW_VERSION             MGPW_VERSION_MAJOR "." MGPW_VERSION_MINOR "." MGPW_VERSION_BUILD
 
@@ -155,6 +155,17 @@ typedef struct tagMGPWLOG {
    char log_level[8];
    short log_errors;
 } MGPWLOG, *PMGPWLOG;
+
+
+typedef struct tagMGPWSSTACK {
+   unsigned char  status;
+   int            chunk_no;
+   unsigned long  len_alloc;
+   unsigned long  offset;
+   unsigned long  data_len;
+   unsigned long  sent_len;
+   ydb_string_t   str;
+} MGPWSSTACK, *PMGPWSSTACK;
 
 
 #if defined(_WIN32)
@@ -325,10 +336,6 @@ extern CRITICAL_SECTION mgpw_global_mutex;
 extern pthread_mutex_t  mgpw_global_mutex;
 #endif
 
-extern MGPW_MALLOC      mgpw_ext_malloc;
-extern MGPW_REALLOC     mgpw_ext_realloc;
-extern MGPW_FREE        mgpw_ext_free;
-
 MGPW_EXTFUN(int)        mg_version                    (int count, ydb_string_t *out);
 MGPW_EXTFUN(int)        mg_error                      (int count, ydb_string_t *error);
 MGPW_EXTFUN(int)        mg_crypt_library              (int count, ydb_string_t *in);
@@ -373,6 +380,8 @@ MGPW_EXTFUN(int)        mg_dbgetproperty              (int count, ydb_string_t *
 MGPW_EXTFUN(int)        mg_dbsetproperty              (int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *pname);
 MGPW_EXTFUN(int)        mg_dbmethod                   (int count, ydb_string_t *data, ydb_string_t *oref, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
 MGPW_EXTFUN(int)        mg_dbcloseinstance            (int count, ydb_string_t *oref);
+MGPW_EXTFUN(int)        mg_dbgetstring                (int count, ydb_string_t *data, ydb_string_t *index, ydb_string_t *chunkno);
+MGPW_EXTFUN(int)        mg_dbputstring                (int count, ydb_string_t *data, ydb_string_t *index, ydb_string_t *chunkno);
 
 #if !defined(_WIN32)
 MGPW_EXTFUN(int)        mg_tcp_options                (int count, ydb_string_t *options, ydb_string_t *error);
@@ -390,15 +399,14 @@ MGPW_EXTFUN(int)        mg_tcpchild_close             (int count);
 int                     mgpw_crypt_load_library       (MGPWCRYPTSO *p_crypt_so);
 
 int                     mgpw_pack_args                (DBXSTR *pblock, int count, ydb_string_t *k1, ydb_string_t *k2, ydb_string_t *k3, ydb_string_t *k4, ydb_string_t *k5, ydb_string_t *k6, ydb_string_t *k7, ydb_string_t *k8, ydb_string_t *k9, ydb_string_t *k10);
-int                     mgpw_unpack_result            (DBXSTR *pblock, ydb_string_t *out);
-int                     mgpw_unpack_result2           (DBXSTR *pblock, ydb_string_t *out1, ydb_string_t *out2);
+int                     mg_add_block_data_ex          (DBXSTR *pblock, int idx, unsigned char *data, unsigned long data_len, int dsort, int dtype);
+int                     mgpw_unpack_result            (DBXSTR *pblock, ydb_string_t *out, int stack_string);
+int                     mgpw_unpack_result2           (DBXSTR *pblock, ydb_string_t *out1, ydb_string_t *out2, int stack_string, int context);
+int                     mgpw_prereq_buffers           ();
+int                     mgpw_postreq_buffers          (DBXMETH *pmeth, DBXSTR *pblock);
 
 int                     mgpw_set_size                 (unsigned char *str, unsigned long data_len);
 unsigned long           mgpw_get_size                 (unsigned char *str);
-
-void *                  mgpw_realloc                  (void *p, int curr_size, int new_size, short id);
-void *                  mgpw_malloc                   (int size, short id);
-int                     mgpw_free                     (void *p, short id);
 
 int                     mgpw_lcase                    (char *string);
 int                     mgpw_log_init                 (MGPWLOG *p_log);

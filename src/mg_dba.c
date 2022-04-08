@@ -82,6 +82,8 @@ Version 1.3.14 17 March 2022:
    - InterSystems: 3641144 Bytes.
    - YottaDB: 1048576 Bytes.
 
+Version 1.3.15 8 April 2022:
+   Catch, and respond gracefully to, the error produced when a string exceeding the InterSystems maximum size (usually 3,641,144 Bytes) is placed on the stack.
 */
 
 
@@ -612,6 +614,7 @@ DBX_EXTFUN(int) dbx_set_x(DBXMETH *pmeth)
    pmeth->increment = 0;
    pmeth->lock = 0;
    rc = mg_global_reference(pmeth);
+
    if (rc != CACHE_SUCCESS) {
       mg_error_message(pmeth, rc);
       goto dbx_set_exit;
@@ -4646,11 +4649,14 @@ int mg_global_reference(DBXMETH *pmeth)
                rc = pcon->p_isc_so->p_CachePushStr(pmeth->args[n].svalue.len_used, (Callin_char_t *) pmeth->args[n].svalue.buf_addr);
             }
             else {
-               pmeth->args[n].cvalue.pstr = (void *) pcon->p_isc_so->p_CacheExStrNew((CACHE_EXSTRP) &(pmeth->args[n].cvalue.zstr), pmeth->args[n].svalue.len_used + 1);
+               pmeth->args[n].cvalue.pstr = (void *) pcon->p_isc_so->p_CacheExStrNew((CACHE_EXSTRP) &(pmeth->args[n].cvalue.zstr), pmeth->args[n].svalue.len_used);
+               if (pmeth->args[n].cvalue.pstr == NULL) { /* v1.3.15 */
+                  rc = CACHE_FAILURE;
+                  break;
+               }
                for (ne = 0; ne < pmeth->args[n].svalue.len_used; ne ++) {
                   pmeth->args[n].cvalue.zstr.str.ch[ne] = (char) pmeth->args[n].svalue.buf_addr[ne];
                }
-               pmeth->args[n].cvalue.zstr.str.ch[ne] = (char) 0;
                pmeth->args[n].cvalue.zstr.len = pmeth->args[n].svalue.len_used;
 
                rc = pcon->p_isc_so->p_CachePushExStr((CACHE_EXSTRP) &(pmeth->args[n].cvalue.zstr));

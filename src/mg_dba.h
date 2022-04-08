@@ -352,8 +352,8 @@ typedef int    xc_status_t;
 #define DBX_LS_BUFFER            3641145
 
 /* v1.3.14 */
-#define DBX_YDB_MAXSIZE          1048575
-#define DBX_YDB_BUFFER           1048576
+#define DBX_YDB_MAXSIZE          1048576
+#define DBX_YDB_BUFFER           1048577
 
 #if defined(MAX_PATH) && (MAX_PATH>511)
 #define DBX_MAX_PATH             MAX_PATH
