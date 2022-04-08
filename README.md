@@ -3,9 +3,9 @@
 Access to OS libraries (e.g. the cryptography library) from **YottaDB** code.
 
 Chris Munt <cmunt@mgateway.com>  
-17 March 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+8 April 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Current Release: Version: 1.3; Revision 6.
+* Current Release: Version: 1.3; Revision 7.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 Contents
@@ -18,7 +18,8 @@ Contents
 * [Wait and Signal functions](#DBSignal)
 * [Accessing InterSystems databases](#DBISC)
 * [Accessing InterSystems classes](#DBClasses)
-* [Accessing InterSystems Transactions](#DBTXP)
+* [Accessing InterSystems transactions](#DBTXP)
+* [Accessing InterSystems long strings](#DBLS)
 * [For the future](#Future)
 * [License](#License)
 
@@ -28,6 +29,8 @@ Contents
 The **YottaDB** *Process Window* (**mg\_pwind**) library is an Open Source solution to provide easy access to functionality contained in external shared libraries.
 
 The **mg\_pwind** library provides access to the cryptographic functions commonly used in web application development. To provide this functionality, **mg_pwind** makes use of the **OpenSSL** cryptography library: **libcrypto.so**.
+
+Also included are functions to access data and functionality held in InterSystems databases.
 
 ## <a name="PreReq"></a> Pre-requisites
 
@@ -496,7 +499,7 @@ Example:
        set status=$&pwind.dbcloseinstance(oref)
 
 
-## <a name="DBTXP"> Accessing InterSystems Transactions
+## <a name="DBTXP"> Accessing InterSystems transactions
 
 ### Start a Transaction
 
@@ -533,6 +536,48 @@ This is equivalent to:
 This is equivalent to:
 
        TRollback
+
+
+## <a name="DBLS"> Accessing InterSystems long strings
+
+The maximum string length for InterSystems DB Servers is usually 3,641,144 Bytes whereas for YottaDB it is currently 1,048,576 Bytes.  The scheme described in this section will allow **mg\_pwind** functions to retrieve (and set) strings up to the maximum size permitted by InterSystems.
+
+### Retrieve an oversize string
+
+       set status=$&pwind.dbgetstring(.<data>, <index>, .<chunk_no>)
+
+* **data** is the next chunk of string data.
+* **index** is the index number for the string.  By convention this is **-1** for data returned from a **mg\_pwind** function.  When a function returns two data items (e.g. **dborderdata**) then the second data item will have an index of **-2**.  The default value for this parameter is **-1**.
+* **chunk_no** is the data chunk number.
+
+After the last chunk is returned, subsequent calls to **dbgetstring** will return an empty string.  The **dbgetstring** function relates only to the previous **mg\_pwind** retrieval operation.
+
+Example (retrieve a large string):
+
+       set rc=$&pwind.dbget(.data,"^MyGlobal","very long string")
+       set dataarray(1)=data
+       for n=2:1 s rc=$&pwind.dbgetstring(.data) q:data=""  set dataarray(n)=data
+
+### Set an oversize string
+
+       set status=$&pwind.dbsetstring(<data>, <index>, .<chunk_no>)
+
+* **data** is the next chunk of string data.
+* **index** is the index number for the string.  By convention this is **0** for data and **1->n** for global subscripts or arguments to functions.
+* **chunk_no** is the data chunk number.
+
+The **dbsetstring** function relates only to the next **mg\_pwind** update operation.
+
+Example (set a large string):
+
+       for n=1:1 quit:'$data(dataarray(n))  s rc=$&pwind.dbsetstring(dataarray(n),0)
+       set rc=$&pwind.dbset("","^MyGlobal","very long string")
+
+Example (set a large string as the first argument to a function):
+
+       for n=1:1 quit:'$data(dataarray(n))  s rc=$&pwind.dbsetstring(dataarray(n),1)
+       set rc=$&pwind.dbfunction(.result, "function^MyRoutine", "")
+
 
 ## <a name="Future"></a> For the future
 
@@ -587,3 +632,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 	* Maximum string length for YottaDB: 1,048,576 Bytes.
 	* Maximum string length for InterSystems databases: 3,641,144 Bytes (32,767 Bytes for older systems).
 * Introduce a simple wait/signal mechanism to aid communication between **YottaDB** processes.
+
+### v1.3.7 (8 April 2022)
+
+* Introduce a scheme for dealing with large strings from InterSystems IRIS and Cache.
+	* The maximum string length for InterSystems DB Servers is usually 3,641,144 Bytes whereas for YottaDB it is currently 1,048,576 Bytes.  This enhancement will allow **mg\_pwind** functions to retrieve (and set) strings up to the maximum size permitted by InterSystems.
+
