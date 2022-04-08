@@ -38,6 +38,8 @@ dbgetproperty: ydb_status_t mg_dbgetproperty(O:ydb_string_t *[1048576], I:ydb_st
 dbsetproperty: ydb_status_t mg_dbsetproperty(I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *)
 dbmethod: ydb_status_t mg_dbmethod(O:ydb_string_t *[1048576], I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *, I:ydb_string_t *)
 dbcloseinstance: ydb_status_t mg_dbcloseinstance(I:ydb_string_t *)
+dbgetstring: ydb_status_t mg_dbgetstring(O:ydb_string_t *[1048576], I:ydb_string_t *, O:ydb_string_t *[32])
+dbputstring: ydb_status_t mg_dbputstring(I:ydb_string_t *, I:ydb_string_t *, O:ydb_string_t *[32])
 tcpoptions: ydb_status_t mg_tcp_options(I:ydb_string_t *, O:ydb_string_t *[512])
 tcpservinit: ydb_status_t mg_tcpserver_init(I:ydb_int_t, I:ydb_string_t *, O:ydb_string_t *[512])
 tcpservaccept: ydb_status_t mg_tcpserver_accept(O:ydb_string_t *[512], O:ydb_string_t *[512])
