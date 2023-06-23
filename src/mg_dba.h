@@ -5,7 +5,7 @@
    |              and YottaDB API                                             |
    | Author:      Chris Munt cmunt@mgateway.com                               |
    |                         chris.e.munt@gmail.com                           |
-   | Copyright (c) 2017-2022 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2019-2023 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -110,8 +110,8 @@
 #endif
 
 
-#ifndef INCL_WINSOCK_API_TYPEDEFS
-#define MG_USE_MS_TYPEDEFS 1
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 /* Cache/IRIS */
@@ -823,6 +823,7 @@ typedef struct tagDBXCVAL {
 
 typedef struct tagDBXVAL {
    short          type;
+   short          sort; /* v1.3.16 */
    short          realloc;
    union {
       int            int32;
@@ -1061,6 +1062,7 @@ typedef struct tagDBXMETH {
    short          done;
    short          lock;
    short          increment;
+   short          merge;
    short          getdata; /* v1.3.13 */
    int            binary;
    int            argc;
@@ -1211,6 +1213,9 @@ DBX_EXTFUN(int)         dbx_defined_ex                (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_increment                 (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_increment_x               (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_increment_ex              (DBXMETH *pmeth);
+DBX_EXTFUN(int)         dbx_merge                     (unsigned char *input, unsigned char *output);
+DBX_EXTFUN(int)         dbx_merge_x                   (DBXMETH *pmeth);
+DBX_EXTFUN(int)         dbx_merge_ex                  (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_lock                      (unsigned char *input, unsigned char *output);
 DBX_EXTFUN(int)         dbx_lock_x                    (DBXMETH *pmeth);
 DBX_EXTFUN(int)         dbx_lock_ex                   (DBXMETH *pmeth);
@@ -1362,6 +1367,10 @@ int                     mg_replace_substrings         (char * tbuffer, char *fbu
 int                     mg_bind_server_api            (MGSRV *p_srv, short context);
 int                     mg_release_server_api         (MGSRV *p_srv, short context);
 int                     mg_invoke_server_api          (MGSRV *p_srv, int chndle, MGBUF *p_buf, int size, int mode);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
 

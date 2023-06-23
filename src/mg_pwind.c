@@ -4,7 +4,7 @@
    | Description: Access to DSO functions from YottaDB                        |
    | Author:      Chris Munt cmunt@mgateway.com                               |
    |                         chris.e.munt@gmail.com                           |
-   | Copyright (c) 2020-2022 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2019-2023 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -55,6 +55,10 @@ Version 1.3.6 17 March 2022:
 Version 1.3.7 8 April 2022:
    Introduce a scheme for dealing with large strings from InterSystems IRIS and Cache.
 	- Maximum string length for InterSystems DB Servers is usually 3,641,144 Bytes whereas for YottaDB it is currently 1,048,576 Bytes.
+
+Version 1.3.7a 23 June 2023:
+   Documentation update.
+
 */
 
 #include "mg_pwind.h"
