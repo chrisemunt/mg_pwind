@@ -2,7 +2,7 @@
 
 Access to OS libraries (e.g. the cryptography library) from **YottaDB** code.
 
-Chris Munt <cmunt@mgateway.com>
+Chris Munt <cmunt@mgateway.com>  
 23 June 2023, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Current Release: Version: 1.3; Revision 7.
