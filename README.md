@@ -2,8 +2,8 @@
 
 Access to OS libraries (e.g. the cryptography library) from **YottaDB** code.
 
-Chris Munt <cmunt@mgateway.com>  
-8 April 2022, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+Chris Munt <cmunt@mgateway.com>
+23 June 2023, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Current Release: Version: 1.3; Revision 7.
 * [Release Notes](#RelNotes) can be found at the end of this document.
@@ -586,7 +586,7 @@ Further functions (and access to other OS libraries) will be added to **mg\_pwin
 
 ## <a name="License"></a> License
 
-Copyright (c) 2018-2022 M/Gateway Developments Ltd,
+Copyright (c) 2018-2023 MGateway Ltd,
 Surrey UK.                                                      
 All rights reserved.
  
@@ -638,3 +638,6 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Introduce a scheme for dealing with large strings from InterSystems IRIS and Cache.
 	* The maximum string length for InterSystems DB Servers is usually 3,641,144 Bytes whereas for YottaDB it is currently 1,048,576 Bytes.  This enhancement will allow **mg\_pwind** functions to retrieve (and set) strings up to the maximum size permitted by InterSystems.
 
+### v1.3.7a (23 June 2023)
+
+* Documentation update.
